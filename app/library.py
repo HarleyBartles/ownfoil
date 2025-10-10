@@ -325,23 +325,22 @@ def identify_library_files(library):
                         file.multicontent = True
                     file.nb_content = nb_content
 
-                    # Default to identified True on success...
-                    file.identified = True
-
-                    # ...but flip to False if any title_id isn’t in TitleDB (homebrew/custom)
                     needs_override = False
                     for tid in title_ids:
-                        gi = titles_lib.get_game_info(tid)  # uses loaded TitleDB
-                        if not gi or gi.get('name') in ('Unrecognized', 'Unidentified'):
+                        if not titles_lib.has_title_id(tid): # uses loaded TitleDB
                             needs_override = True
                             break
 
                     if needs_override:
+                        # set identified to False if any title_id isn’t in TitleDB (homebrew/custom)
+                        logger.info(f"Marking file as NOT identified (not in TitleDB): {filename} (title_ids={title_ids})")
                         file.identified = False
                         file.identification_type = "not_in_titledb"
                         file.identification_error = "Title ID not present in TitleDB (homebrew/custom)."
                     else:
-                        file.identification_type = identification
+                        # otherwise set it to True
+                        file.identified = True
+                        file.identification_type = identification  # e.g., 'cnmt'
                         file.identification_error = None
 
                 else:

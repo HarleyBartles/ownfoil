@@ -285,8 +285,19 @@ def identify_file(filepath):
             } for c in contents]
     return identification, success, contents, error
 
+def has_title_id(title_id: str) -> bool:
+    """Return True if TitleDB has a recognized entry for this title_id."""
+    global _titles_db
+    if _titles_db is None:
+        logger.error("titles_db is not loaded. Call load_titledb first.")
+        return False
+    try:
+        return title_id in _titles_db
+    except Exception as e:
+        logger.warning(f"Error checking TitleDB membership for {title_id}: {e}")
+        return False
 
-def get_game_info(title_id):
+def get_game_info(title_id: str):
     global _titles_db
     if _titles_db is None:
         logger.error("titles_db is not loaded. Call load_titledb first.")
