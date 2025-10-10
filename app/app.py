@@ -18,6 +18,7 @@ from auth import *
 import titles
 from utils import *
 from library import *
+from overrides_api import overrides_api, admin_overrides
 import titledb
 import os
 
@@ -194,6 +195,9 @@ def create_app():
     login_manager.init_app(app)
 
     app.register_blueprint(auth_blueprint)
+
+    app.register_blueprint(overrides_api)
+    app.register_blueprint(admin_overrides)
 
     return app
 

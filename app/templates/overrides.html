@@ -1,0 +1,160 @@
+{% extends "base.html" %}
+{% block title %}Unidentified Titles · Admin{% endblock %}
+{% block content %}
+{% include 'nav.html' %}
+
+<div class="container py-4">
+  <div class="d-flex align-items-center justify-content-between mb-3">
+    <h3 class="mb-0">Unidentified Titles</h3>
+    <small class="text-muted">Quickly assign titles to unidentified files</small>
+  </div>
+
+  <div id="alerts"></div>
+
+  <div class="table-responsive">
+    <table class="table table-sm align-middle">
+      <thead class="table-light">
+        <tr>
+          <th style="width: 40%;">Filename</th>
+          <th style="width: 15%;">Size</th>
+          <th style="width: 20%;">Current Title</th>
+          <th style="width: 20%;">Set Title</th>
+          <th style="width: 5%;"></th>
+        </tr>
+      </thead>
+      <tbody id="override-table-body">
+        {% if not items %}
+        <tr>
+        <td colspan="5" class="text-muted">
+            No unidentified or homebrew-title files found.
+            <a href="{{ url_for('admin_overrides.overrides_page', include_homebrew='1') }}">Include homebrew</a>
+        </td>
+        </tr>
+        {% endif %}
+        {% for it in items %}
+        <tr data-file="{{ it.file_basename | e }}" data-override-id="{{ it.override_id or '' }}">
+          <td class="font-monospace">{{ it.file_basename }}</td>
+          <td>
+            {% if it.size is not none %}
+              {{ (it.size / (1024*1024))|round(2) }} MB
+            {% else %}
+              —
+            {% endif %}
+          </td>
+          <td class="current-title">
+            {% if it.override_name %}
+              <span class="badge bg-success">{{ it.override_name }}</span>
+            {% else %}
+              <span class="text-muted">Unidentified</span>
+            {% endif %}
+          </td>
+          <td>
+            <input type="text"
+                   class="form-control form-control-sm title-input"
+                   placeholder="Enter title…"
+                   value="{{ it.override_name or '' }}">
+          </td>
+          <td>
+            <button class="btn btn-sm btn-primary save-btn">Save</button>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+(function () {
+  const $alerts = document.getElementById('alerts');
+
+  function flash(type, msg) {
+    const id = 'alert-' + Math.random().toString(36).slice(2);
+    const el = document.createElement('div');
+    el.className = `alert alert-${type} alert-dismissible fade show`;
+    el.id = id;
+    el.role = 'alert';
+    el.innerHTML = `
+      <div>${msg}</div>
+      <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    `;
+    $alerts.appendChild(el);
+    setTimeout(() => {
+      const alert = bootstrap.Alert.getOrCreateInstance(document.getElementById(id));
+      alert.close();
+    }, 3500);
+  }
+
+  async function saveOverride(tr) {
+    const file = tr.getAttribute('data-file');
+    const overrideId = tr.getAttribute('data-override-id');
+    const input = tr.querySelector('.title-input');
+    const currentTitleCell = tr.querySelector('.current-title');
+    const newName = (input.value || '').trim();
+
+    if (!newName) {
+      flash('warning', 'Please enter a title before saving.');
+      input.focus();
+      return;
+    }
+
+    const payload = { file_basename: file, name: newName };
+    let url, method;
+
+    if (overrideId) {
+      url = `/api/overrides/${overrideId}`;
+      method = 'PUT';
+    } else {
+      url = '/api/overrides';
+      method = 'POST';
+    }
+
+    try {
+      const res = await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || `HTTP ${res.status}`);
+      }
+
+      const data = await res.json();
+
+      // Normalize response: support either {id, ...} or wrapped
+      const newId = data.id || (data.data && data.data.id);
+      const effectiveName = data.name || (data.data && data.data.name) || newName;
+
+      if (newId) {
+        tr.setAttribute('data-override-id', newId);
+      }
+      currentTitleCell.innerHTML = `<span class="badge bg-success">${effectiveName}</span>`;
+      flash('success', 'Saved.');
+    } catch (err) {
+      console.error(err);
+      flash('danger', `Save failed: ${err.message}`);
+    }
+  }
+
+  document.getElementById('override-table-body').addEventListener('click', (e) => {
+    const btn = e.target.closest('.save-btn');
+    if (!btn) return;
+    const tr = btn.closest('tr');
+    saveOverride(tr);
+  });
+
+  // Enter key submits row
+  document.querySelectorAll('.title-input').forEach(inp => {
+    inp.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        const tr = e.target.closest('tr');
+        saveOverride(tr);
+      }
+    });
+  });
+})();
+</script>
+{% endblock %}

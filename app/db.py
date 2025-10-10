@@ -138,6 +138,64 @@ class User(UserMixin, db.Model):
         elif access == 'backup':
             return self.has_backup_access()
 
+class UserOverrides(db.Model):
+    __tablename__ = 'user_overrides'
+
+    id = db.Column(db.Integer, primary_key=True)
+
+    # ---- Target selectors (at least one) ----
+    # Prefer title_id (stable); fall back to file_basename for unidentifed items.
+    title_id = db.Column(db.String, index=True, nullable=True)
+    file_basename = db.Column(db.String, index=True, nullable=True)
+
+    # (Optional) If you ever need to target specific app entries
+    app_id = db.Column(db.String, nullable=True, index=True)
+    app_version = db.Column(db.String, nullable=True)
+
+    # ---- Overridable metadata (all optional) ----
+    name = db.Column(db.String(512), nullable=True)
+    publisher = db.Column(db.String(256), nullable=True)
+    region = db.Column(db.String(32), nullable=True)
+    description = db.Column(db.Text, nullable=True)
+    content_type = db.Column(db.String(64), nullable=True)  # e.g., Base/Update/DLC
+    version = db.Column(db.String(64), nullable=True)
+
+    # ---- Artwork: store relative paths under /static/... ----
+    icon_path = db.Column(db.String(1024), nullable=True)    # e.g., "manual-icons/foo.jpg"
+    banner_path = db.Column(db.String(1024), nullable=True)  # e.g., "manual-banners/foo.jpg"
+
+    enabled = db.Column(db.Boolean, nullable=False, default=True)
+
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.datetime.utcnow)
+    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.datetime.utcnow,
+                           onupdate=datetime.datetime.utcnow)
+
+    # One override per target tuple (prevents accidental duplicates)
+    __table_args__ = (
+        db.UniqueConstraint('title_id', 'file_basename', 'app_id', 'app_version',
+                            name='uq_user_overrides_target'),
+    )
+
+    def as_dict(self):
+        return {
+            'id': self.id,
+            'title_id': self.title_id,
+            'file_basename': self.file_basename,
+            'app_id': self.app_id,
+            'app_version': self.app_version,
+            'name': self.name,
+            'publisher': self.publisher,
+            'region': self.region,
+            'description': self.description,
+            'content_type': self.content_type,
+            'version': self.version,
+            'icon_path': self.icon_path,
+            'banner_path': self.banner_path,
+            'enabled': self.enabled,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+        }
+
 def init_db(app):
     with app.app_context():
         # Ensure foreign keys are enforced when the SQLite connection is opened
@@ -236,29 +294,54 @@ def get_files_with_identification_from_library(library_id, identification_type):
     return Files.query.filter_by(library_id=library_id, identification_type=identification_type).all()
 
 def get_shop_files():
+    from overrides import merge_with_override
     shop_files = []
     results = Files.query.options(db.joinedload(Files.apps).joinedload(Apps.title)).all()
 
     for file in results:
-        if file.identified:
-            # Get the first app associated with this file using the many-to-many relationship
-            app = file.apps[0] if file.apps else None
+        # Get the first app associated with this file using the many-to-many relationship
+        app = file.apps[0] if file.apps else None
 
-            if app:
-                if file.multicontent or file.extension.startswith('x'):
-                    title_id = app.title.title_id
-                    final_filename = f"[{title_id}].{file.extension}"
+        # Base payload we might expose elsewhere too
+        base_meta = {
+            "file_id": file.id,
+            "file_basename": file.filename,  # using filename as our basename selector
+            "size": file.size,
+            "identified": file.identified,
+            "title_id": app.title.title_id if app else None,
+            "app_id": app.app_id if app else None,
+            "app_version": app.app_version if app else None,
+            "name": None,              # will be filled by override if provided
+            "icon_url": None,          # can be filled later where you build icon paths
+            "banner_url": None,
+        }
+
+        # Apply override (if any)
+        merged = merge_with_override(base_meta,)
+
+        # Recompute filename if we received a friendly name override and the file is unidentified
+        if not file.identified and merged.get("name"):
+            # Show the friendly name instead of "(unidentified)"
+            final_filename = f"{merged['name']}.{file.extension}"
+        else:
+            if file.identified:
+                if app:
+                    if file.multicontent or file.extension.startswith('x'):
+                        title_id = app.title.title_id
+                        final_filename = f"[{title_id}].{file.extension}"
+                    else:
+                        final_filename = f"[{app.app_id}][v{app.app_version}].{file.extension}"
                 else:
-                    final_filename = f"[{app.app_id}][v{app.app_version}].{file.extension}"
+                    final_filename = file.filename.replace(f'.{file.extension}', '') + ' (unidentified).' + file.extension
             else:
                 final_filename = file.filename.replace(f'.{file.extension}', '') + ' (unidentified).' + file.extension
-        else:
-            final_filename = file.filename.replace(f'.{file.extension}', '') + ' (unidentified).' + file.extension
 
         shop_files.append({
             "id": file.id,
             "filename": final_filename,
-            "size": file.size
+            "size": file.size,
+            # optional: bubble up whether an override affected this entry
+            "overridden": merged.get("overridden", False),
         })
 
     return shop_files

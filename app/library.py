@@ -1,10 +1,44 @@
+import os
 import hashlib
 from constants import *
 from db import *
 import titles as titles_lib
 import datetime
 from pathlib import Path
+from sqlalchemy import or_
 from utils import *
+
+def _apply_override_to_title_dict(title_dict):
+    """
+    Best-effort: find an associated file for this app_id+version and
+    apply a user override (by filename or title_id) to the dict.
+    """
+    # Lazy import to avoid circular import at module import time
+    from overrides import find_user_override, apply_user_override
+    # We need an app row to reach its files relationship
+    app_row = Apps.query.filter_by(
+        app_id=title_dict.get("app_id"),
+        app_version=str(title_dict.get("app_version", "0"))
+    ).first()
+
+    file_basename = None
+    if app_row and getattr(app_row, "files", None):
+        # pick the first associated file (owned path)
+        f0 = next(iter(app_row.files), None)
+        if f0:
+            file_basename = f0.filename
+
+    # Try matching priority: title_id, (app_id+version), filename
+    uo = find_user_override(
+        title_id=title_dict.get("title_id"),
+        app_id=title_dict.get("app_id"),
+        app_version=str(title_dict.get("app_version", "0")),
+        file_basename=file_basename,
+    )
+    if uo:
+        # apply_user_override returns a new dict with fields patched
+        return apply_user_override(title_dict, uo)
+    return title_dict
 
 def add_library_complete(app, watcher, path):
     """Add a library to settings, database, and watchdog"""
@@ -85,9 +119,16 @@ def init_libraries(app, watcher, paths):
                 watcher.add_directory(path)
 
 def add_files_to_library(library, files):
+    """
+    Upsert files into the Files table.
+    - Always inserts a row even when file_info is None (marks as unidentified).
+    - Updates existing rows in place.
+    """
     nb_to_identify = len(files)
-    if isinstance(library, int) or library.isdigit():
-        library_id = library
+
+    # Resolve library_id/path
+    if isinstance(library, int) or (isinstance(library, str) and library.isdigit()):
+        library_id = int(library)
         library_path = get_library_path(library_id)
     else:
         library_path = library
@@ -95,25 +136,77 @@ def add_files_to_library(library, files):
 
     library_path = get_library_path(library_id)
     for n, filepath in enumerate(files):
-        file = filepath.replace(library_path, "")
-        logger.info(f'Getting file info ({n+1}/{nb_to_identify}): {file}')
+        file_rel = filepath.replace(library_path, "")
+        logger.info(f'Getting file info ({n+1}/{nb_to_identify}): {file_rel}')
 
-        file_info = titles_lib.get_file_info(filepath)
+        # Try to read basic FS info regardless of titles_lib outcome
+        filename = os.path.basename(filepath)
+        extension = os.path.splitext(filename)[1].lstrip(".").lower()
+        try:
+            size = os.path.getsize(filepath)
+        except Exception:
+            size = None
 
-        if file_info is None:
-            logger.error(f'Failed to get info for file: {file} - file will be skipped.')
-            # in the future save identification error to be displayed and inspected in the UI
-            continue
+        # Call the metadata helper
+        try:
+            file_info = titles_lib.get_file_info(filepath)
+        except Exception as e:
+            logger.exception(f"Error getting info for file {file_rel}: {e}")
+            file_info = None
 
-        new_file = Files(
-            filepath = filepath,
-            library_id = library_id,
-            folder = file_info["filedir"],
-            filename = file_info["filename"],
-            extension = file_info["extension"],
-            size = file_info["size"],
-        )
-        db.session.add(new_file)
+        # Upsert by unique filepath
+        existing = Files.query.filter_by(filepath=filepath).first()
+        if existing:
+            # Refresh core info
+            existing.folder = os.path.dirname(filepath) if file_info is None else file_info.get("filedir", os.path.dirname(filepath))
+            existing.filename = filename if file_info is None else file_info.get("filename", filename)
+            existing.extension = extension if file_info is None else file_info.get("extension", extension)
+            # Size: prefer file_info size if provided, else FS size
+            existing.size = (file_info.get("size") if (file_info and "size" in file_info) else size)
+
+            # Identification flags
+            if file_info is None:
+                existing.identified = False
+                existing.identification_type = "unidentified"
+                existing.identification_error = "Failed to parse file info"
+            else:
+                existing.identified = True
+                existing.identification_type = "titles_lib"
+                existing.identification_error = None
+
+            existing.identification_attempts = (existing.identification_attempts or 0) + 1
+            existing.last_attempt = datetime.datetime.utcnow()
+
+        else:
+            if file_info is None:
+                new_file = Files(
+                    filepath=filepath,
+                    library_id=library_id,
+                    folder=os.path.dirname(filepath),
+                    filename=filename,
+                    extension=extension,
+                    size=size,
+                    identified=False,
+                    identification_type="unidentified",
+                    identification_error="Failed to parse file info",
+                    identification_attempts=1,
+                    last_attempt=datetime.datetime.utcnow(),
+                )
+            else:
+                new_file = Files(
+                    filepath=filepath,
+                    library_id=library_id,
+                    folder=file_info.get("filedir", os.path.dirname(filepath)),
+                    filename=file_info.get("filename", filename),
+                    extension=file_info.get("extension", extension),
+                    size=file_info.get("size", size),
+                    identified=True,
+                    identification_type="titles_lib",
+                    identification_error=None,
+                    identification_attempts=1,
+                    last_attempt=datetime.datetime.utcnow(),
+                )
+            db.session.add(new_file)
 
         # Commit every 100 files to avoid excessive memory use
         if (n + 1) % 100 == 0:
@@ -135,102 +228,152 @@ def scan_library_path(library_path):
     add_files_to_library(library_id, new_files)
     set_library_scan_time(library_id)
 
-def get_files_to_identify(library_id):
-    non_identified_files = get_all_non_identified_files_from_library(library_id)
-    if titles_lib.Keys.keys_loaded:
-        files_to_identify_with_cnmt = get_files_with_identification_from_library(library_id, 'filename')
-        non_identified_files = list(set(non_identified_files).union(files_to_identify_with_cnmt))
-    return non_identified_files
+def get_files_to_identify(library_id, *, force_all: bool = False):
+    q = Files.query.filter(Files.library_id == library_id)
+
+    if not force_all:
+        q = q.filter(
+            or_(
+                Files.identified.is_(None),
+                Files.identification_type.is_(None),
+                Files.last_attempt.is_(None),
+                # optional: rescan stale entries older than 7 days
+                Files.last_attempt < func.now() - func.cast(7, db.Interval)  # adapt if not using Interval
+            )
+        )
+
+    return q.order_by(
+        Files.last_attempt.is_(None).desc(),
+        Files.last_attempt.asc()
+    ).all()
 
 def identify_library_files(library):
-    if isinstance(library, int) or library.isdigit():
-        library_id = library
+    # Resolve library_id / path
+    if isinstance(library, int) or (isinstance(library, str) and library.isdigit()):
+        library_id = int(library)
         library_path = get_library_path(library_id)
     else:
         library_path = library
         library_id = get_library_id(library_path)
-    files_to_identify = get_files_to_identify(library_id)
+
+    files_to_identify = get_files_to_identify(library_id, force_all=True)
     nb_to_identify = len(files_to_identify)
-    for n, file in enumerate(files_to_identify):
-        try:
-            file_id = file.id
-            filepath = file.filepath
-            filename = file.filename
 
-            if not os.path.exists(filepath):
-                logger.warning(f'Identifying file ({n+1}/{nb_to_identify}): {filename} no longer exists, deleting from database.')
-                Files.query.filter_by(id=file_id).delete(synchronize_session=False)
-                continue
+    # Load TitleDB once so we can check presence of title_ids quickly
+    titles_lib.load_titledb()
+    try:
+        for n, file in enumerate(files_to_identify):
+            try:
+                file_id = file.id
+                filepath = file.filepath
+                filename = file.filename
 
-            logger.info(f'Identifying file ({n+1}/{nb_to_identify}): {filename}')
-            identification, success, file_contents, error = titles_lib.identify_file(filepath)
-            if success and file_contents and not error:
-                # find all unique Titles ID to add to the Titles db
-                title_ids = list(dict.fromkeys([c['title_id'] for c in file_contents]))
+                if not os.path.exists(filepath):
+                    logger.warning(f'Identifying file ({n+1}/{nb_to_identify}): {filename} no longer exists, deleting from database.')
+                    Files.query.filter_by(id=file_id).delete(synchronize_session=False)
+                    continue
 
-                for title_id in title_ids:
-                    add_title_id_in_db(title_id)
+                logger.info(f'Identifying file ({n+1}/{nb_to_identify}): {filename}')
+                identification, success, file_contents, error = titles_lib.identify_file(filepath)
 
-                nb_content = 0
-                for file_content in file_contents:
-                    logger.info(f'Identifying file ({n+1}/{nb_to_identify}) - Found content Title ID: {file_content["title_id"]} App ID : {file_content["app_id"]} Title Type: {file_content["type"]} Version: {file_content["version"]}')
-                    # now add the content to Apps
-                    title_id_in_db = get_title_id_db_id(file_content["title_id"])
-                    
-                    # Check if app already exists
-                    existing_app = get_app_by_id_and_version(
-                        file_content["app_id"],
-                        file_content["version"]
-                    )
-                    
-                    if existing_app:
-                        # Add file to existing app using many-to-many relationship
-                        add_file_to_app(file_content["app_id"], file_content["version"], file_id)
-                    else:
-                        # Create new app entry and add file using many-to-many relationship
-                        new_app = Apps(
-                            app_id=file_content["app_id"],
-                            app_version=file_content["version"],
-                            app_type=file_content["type"],
-                            owned=True,
-                            title_id=title_id_in_db
+                if success and file_contents and not error:
+                    # Unique title_ids present in this file
+                    title_ids = list(dict.fromkeys([c['title_id'] for c in file_contents]))
+
+                    # Ensure Titles table has those IDs
+                    for title_id in title_ids:
+                        add_title_id_in_db(title_id)
+
+                    nb_content = 0
+                    for file_content in file_contents:
+                        logger.info(
+                            f'Identifying file ({n+1}/{nb_to_identify}) - '
+                            f'Found content Title ID: {file_content["title_id"]} '
+                            f'App ID : {file_content["app_id"]} '
+                            f'Title Type: {file_content["type"]} '
+                            f'Version: {file_content["version"]}'
                         )
-                        db.session.add(new_app)
-                        db.session.flush()  # Flush to get the app ID
-                        
-                        # Add the file to the new app
-                        file_obj = get_file_from_db(file_id)
-                        if file_obj:
-                            new_app.files.append(file_obj)
-                    
-                    nb_content += 1
+                        # Upsert Apps and attach file via M2M
+                        title_id_in_db = get_title_id_db_id(file_content["title_id"])
 
-                if nb_content > 1:
-                    file.multicontent = True
-                file.nb_content = nb_content
-                file.identified = True
-            else:
-                logger.warning(f"Error identifying file {filename}: {error}")
-                file.identification_error = error
+                        existing_app = get_app_by_id_and_version(
+                            file_content["app_id"],
+                            file_content["version"]
+                        )
+
+                        if existing_app:
+                            add_file_to_app(file_content["app_id"], file_content["version"], file_id)
+                        else:
+                            new_app = Apps(
+                                app_id=file_content["app_id"],
+                                app_version=file_content["version"],
+                                app_type=file_content["type"],
+                                owned=True,
+                                title_id=title_id_in_db
+                            )
+                            db.session.add(new_app)
+                            db.session.flush()  # to get new_app id
+
+                            file_obj = get_file_from_db(file_id)
+                            if file_obj:
+                                new_app.files.append(file_obj)
+
+                        nb_content += 1
+
+                    # Update multi-content flags
+                    if nb_content > 1:
+                        file.multicontent = True
+                    file.nb_content = nb_content
+
+                    # Default to identified True on success...
+                    file.identified = True
+
+                    # ...but flip to False if any title_id isn’t in TitleDB (homebrew/custom)
+                    needs_override = False
+                    for tid in title_ids:
+                        gi = titles_lib.get_game_info(tid)  # uses loaded TitleDB
+                        if not gi or gi.get('name') in ('Unrecognized', 'Unidentified'):
+                            needs_override = True
+                            break
+
+                    if needs_override:
+                        file.identified = False
+                        file.identification_type = "not_in_titledb"
+                        file.identification_error = "Title ID not present in TitleDB (homebrew/custom)."
+                    else:
+                        file.identification_type = identification
+                        file.identification_error = None
+
+                else:
+                    # Failed to identify contents
+                    logger.warning(f"Error identifying file {filename}: {error}")
+                    file.identification_error = error
+                    file.identified = False
+                    if not getattr(file, "identification_type", None):
+                        file.identification_type = "exception"
+
+            except Exception as e:
+                logger.warning(f"Error identifying file {getattr(file, 'filename', '<unknown>')}: {e}")
+                file.identification_error = str(e)
                 file.identified = False
+                # keep identification_type as-is if set earlier; otherwise mark generic
+                if not getattr(file, "identification_type", None):
+                    file.identification_type = "exception"
 
-            file.identification_type = identification
+            # finally update attempts/time
+            file.identification_attempts = (file.identification_attempts or 0) + 1
+            file.last_attempt = datetime.datetime.now()
 
-        except Exception as e:
-            logger.warning(f"Error identifying file {filename}: {e}")
-            file.identification_error = str(e)
-            file.identified = False
+            # Commit every 100 files to avoid excessive memory use
+            if (n + 1) % 100 == 0:
+                db.session.commit()
 
-        # and finally update the File with identification info
-        file.identification_attempts += 1
-        file.last_attempt = datetime.datetime.now()
+        # Final commit for the batch
+        db.session.commit()
 
-        # Commit every 100 files to avoid excessive memory use
-        if (n + 1) % 100 == 0:
-            db.session.commit()
-
-    # Final commit
-    db.session.commit()
+    finally:
+        # Keep titledb counters consistent and unload after a short debounce window
+        titles_lib.unload_titledb()
 
 def add_missing_apps_to_db():
     logger.info('Adding missing apps to database...')
@@ -452,10 +595,10 @@ def load_library_from_disk():
 
 def generate_library():
     """Generate the game library from Apps table, using cached version if unchanged"""
-    if is_library_unchanged():
-        saved_library = load_library_from_disk()
-        if saved_library:
-            return saved_library['library']
+    # if is_library_unchanged():
+    #     saved_library = load_library_from_disk()
+    #     if saved_library:
+    #         return saved_library['library']
     
     logger.info(f'Generating library ...')
     titles_lib.load_titledb()
@@ -477,6 +620,7 @@ def generate_library():
             logger.warning(f'Info not found for game: {title}')
             continue
         title.update(info_from_titledb)
+        title = _apply_override_to_title_dict(title)
         
         if title['app_type'] == APP_TYPE_BASE:
             # Get title status from Titles table (already calculated by update_titles)
@@ -543,6 +687,7 @@ def generate_library():
             # Get title name for DLC
             titleid_info = titles_lib.get_game_info(title['title_id'])
             title['title_id_name'] = titleid_info['name'] if titleid_info else 'Unrecognized'
+            title = _apply_override_to_title_dict(title)
             
         games_info.append(title)
     
