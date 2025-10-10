@@ -16,6 +16,7 @@ services:
       # - USER_GUEST_PASSWORD=oerze!@8981
     volumes:
       - /your/game/directory:/games
+      - /your/rom/directory:/roms
       - ./config:/app/config
       - ./data:/app/data
     ports:

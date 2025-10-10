@@ -182,24 +182,6 @@ def on_library_change(events):
 
     post_library_change()
 
-def create_app():
-    app = Flask(__name__)
-    app.config["SQLALCHEMY_DATABASE_URI"] = OWNFOIL_DB
-    # TODO: generate random secret_key
-    app.config['SECRET_KEY'] = '8accb915665f11dfa15c2db1a4e8026905f57716'
-    app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-
-    db.init_app(app)
-    migrate.init_app(app, db)
-    login_manager.init_app(app)
-
-    app.register_blueprint(auth_blueprint)
-
-    return app
-
-# Create app
-app = create_app()
-
 
 def tinfoil_error(error):
     return jsonify({
@@ -265,6 +247,30 @@ def tinfoil_access(f):
         return f(*args, **kwargs)
     return _tinfoil_access
 
+def create_app():
+    app = Flask(__name__)
+    app.config["SQLALCHEMY_DATABASE_URI"] = OWNFOIL_DB
+    # TODO: generate random secret_key
+    app.config['SECRET_KEY'] = '8accb915665f11dfa15c2db1a4e8026905f57716'
+    app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+    db.init_app(app)
+    migrate.init_app(app, db)
+    login_manager.init_app(app)
+
+    app.register_blueprint(auth_blueprint)
+
+    from roms import roms_bp
+    from constants import ROM_PATHS
+    app.register_blueprint(roms_bp)
+    app.view_functions["roms.roms_snes"] = tinfoil_access(app.view_functions["roms.roms_snes"])
+    app.ROM_PATHS = ROM_PATHS
+
+    return app
+
+# Create app
+app = create_app()
+
 def access_shop():
     return render_template('index.html', title='Library', admin_account_created=admin_account_created(), valid_keys=app_settings['titles']['valid_keys'])
 
@@ -286,6 +292,19 @@ def index():
             shop["referrer"] = f"https://{request.verified_host}"
             
         shop["files"] = gen_shop_files(db)
+        
+        host = request.host_url.rstrip("/")
+        dir_url = f"{host}/roms/snes"
+        if request.verified_host is not None:
+            dir_url = f"https://{request.verified_host}/roms/snes"
+        
+        #shop.setdefault("directories", []).append(f"{host}/roms/snes/")
+        
+        shop.setdefault("locations", []).append({
+            "url": f"{dir_url}/",   # trailing slash is fine
+            "title": "SNES",
+            "action": "add"         # add/enable/disable supported
+        })
 
         if app_settings['shop']['encrypt']:
             return Response(encrypt_shop(shop), mimetype='application/octet-stream')

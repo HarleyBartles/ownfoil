@@ -22,9 +22,14 @@ TITLEDB_DEFAULT_FILES = [
 
 OWNFOIL_DB = 'sqlite:///' + DB_FILE
 
+ROM_PATHS = os.getenv("OWNFOIL_ROM_PATH", "/roms")
+
 DEFAULT_SETTINGS = {
     "library": {
         "paths": ["/games"],
+    },
+    "roms": {
+        "paths": [ROM_PATHS],
     },
     "titles": {
         "language": "en",
