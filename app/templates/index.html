@@ -72,6 +72,21 @@
                                 Missing DLC
                             </label>
                         </li>
+                        <li>
+                            <hr class="dropdown-divider">
+                        </li>
+                        <li>
+                            <label class="form-check-label dropdown-item" for="filterCheckUnrecognized">
+                                <input class="form-check-input filterLabel" type="checkbox" value="" id="filterCheckUnrecognized">
+                                Unrecognized
+                            </label>
+                        </li>
+                        <li>
+                            <label class="form-check-label dropdown-item" for="filterCheckOverridden">
+                                <input class="form-check-input filterLabel" type="checkbox" value="" id="filterCheckOverridden">
+                                Overridden
+                            </label>
+                        </li>
                         <!-- <div class="text-center m-2">
                             <button id="btnApplyFilters" type="button" class="btn btn-primary" style="width: 85%;">Apply
                                 filters</button>
@@ -131,29 +146,133 @@
     </nav>
 </div>
 
+<!-- Override Editor Modal -->
+<div id="overrideEditorModal" class="modal fade" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered" style="max-width:520px;">
+    <div class="modal-content bg-dark text-light">
+      <div class="modal-header">
+        <h5 class="modal-title">Edit Override: <span id="ovr-file-name"></span></h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="ovr-id">
+        <input type="hidden" id="ovr-title-id">
+        <input type="hidden" id="ovr-file-basename">
+
+        <div class="mb-2">
+          <label class="form-label">Name</label>
+          <input id="ovr-name" type="text" class="form-control" placeholder="Title name">
+        </div>
+        <div class="mb-2">
+          <label class="form-label">Publisher</label>
+          <input id="ovr-publisher" type="text" class="form-control" placeholder="Publisher">
+        </div>
+        <div class="mb-2">
+          <label class="form-label">Region</label>
+          <input id="ovr-region" type="text" class="form-control" placeholder="US, EU, JP, ...">
+        </div>
+        <div class="mb-2">
+          <label class="form-label">Description</label>
+          <textarea id="ovr-description" class="form-control" rows="3" placeholder="Description"></textarea>
+        </div>
+        <div class="mb-2">
+          <label class="form-label">Version</label>
+          <input id="ovr-version" type="number" class="form-control" placeholder="e.g. 10000">
+        </div>
+      </div>
+      <div class="modal-footer justify-content-between">
+        <button id="btn-reset-override" type="button" class="btn btn-danger" style="display:none;">Reset override</button>
+        <div>
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button id="btn-save-override" type="button" class="btn btn-primary">Save</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+  .override-pill {
+    border: 1px solid rgba(255,255,255,.25);
+    background: rgba(255,255,255,.06);
+    color: #fff;
+    padding: .15rem .45rem;
+    border-radius: 999px;
+    font-size: .85rem;
+    line-height: 1;
+  }
+  .override-pill:hover { background: rgba(255,255,255,.12); }
+</style>
+
 <script>
-    let games;
-    let filteredGames;
+    let games = [];
+    let filteredGames = [];
     let itemsPerPage = 12;
     let currentPage = 1;
     let totalGames = 0;
     let cardSize = 3; // Default card size
     let currentView = 'card'; // Default view is 'card'
+    let dataReady = false;
+
+    // --- Overrides state ---
+    // key: title_id or "file:<file_basename>"  -> override object
+    const overridesByKey = new Map();
+    const overrideModal = () => bootstrap.Modal.getOrCreateInstance('#overrideEditorModal');
+
+    function keyForGame(game) {
+        if (game?.title_id) return game.title_id;
+        if (game?.file_basename) return 'file:' + game.file_basename;
+        return '';
+    }
+    function keyForOverride(ovr) {
+        if (ovr.title_id) return ovr.title_id;
+        if (ovr.file_basename) return 'file:' + ovr.file_basename;
+        return '';
+    }
+
+    async function fetchOverrides() {
+        const res = await fetch('/api/overrides');
+        if (!res.ok) throw new Error('Failed to load overrides');
+        const list = await res.json();
+        overridesByKey.clear();
+        list.forEach(o => {
+            const k = keyForOverride(o);
+            if (k) overridesByKey.set(k, o);
+        });
+    }
+
+    function hasActiveOverride(game) {
+        const k = keyForGame(game);
+        return k && overridesByKey.has(k);
+    }
+
+    function isUnrecognizedGame(game) {
+        const identified = game?.identified === true;
+        const idType = (game?.identification_type || '').toLowerCase();
+        if (!identified) return true;
+        if (['not_in_titledb','exception','unidentified'].includes(idType)) return true;
+        if (hasActiveOverride(game)) return true;
+        return false;
+    }
 
     function fetchGames() {
         return new Promise((resolve, reject) => {
             $.get(`/api/titles`, function (data) {
                 totalGames = data.total;
-                games = data.games;
-                filteredGames = games;
+                games = Array.isArray(data.games) ? data.games : [];
+                filteredGames = games.slice();
                 resolve();
             }).fail(function() {
+                games = [];
+                filteredGames = [];
                 reject();
             });
         });
     }
 
     function renderGames() {
+        if (!dataReady) return;
+
         // Set slider to show `cardsize` columns by default
         $('#cardSizeRange').val(cardSize);
 
@@ -179,25 +298,46 @@
         const gameGrid = $('#gameGrid');
         gameGrid.empty(); // Clear existing games
 
+        // Guard: if filteredGames is not ready, do nothing
+        if (!Array.isArray(filteredGames) || filteredGames.length === 0) {
+            updatePaginationControls(0);
+            return;
+        }
+
         // Get games for the current page
-        start = (currentPage - 1) * itemsPerPage
-        end = start + itemsPerPage
-        paginatedGames = filteredGames.slice(start, end);
+        const start = (currentPage - 1) * itemsPerPage;
+        const end = start + itemsPerPage;
+        const paginatedGames = filteredGames.slice(start, end);
 
         paginatedGames.forEach(function (game) {
             const gameCol = $('<div class="col game-col"></div>').addClass(`col-${12 / getColumnsForCardSize(cardSize)}`);
 
-            const card = $('<div class="card text-bg-dark game-card"></div>');
+            const card = $('<div class="card text-bg-dark game-card"></div>')
+                .attr('data-title-id', game.title_id || '')
+                .attr('data-file-basename', game.file_basename || '')
+                .attr('data-identified', game.identified ? 'true' : 'false')
+                .attr('data-identification-type', (game.identification_type || '').toLowerCase());
 
             const img = $('<img class="card-img"></img>').attr('src', game.bannerUrl);
             card.append(img);
 
             const cardOverlay = $('<div class="card-img-overlay game-info"></div>');
 
-            const title = $('<h5 class="card-title game-title"></h5>').text(game.title_id_name || game.name);
-            cardOverlay.append(title);
+            // Title line with override indicator
+            const titleLine = $('<div class="d-flex align-items-center justify-content-between"></div>');
+            const title = $('<h5 class="card-title game-title mb-1"></h5>').text(game.title_id_name || game.name || 'Unrecognized');
+            titleLine.append(title);
 
-            const description = $('<p class="card-text game-description"></p>');
+            const pill = $('<button type="button" class="override-pill btn btn-sm"></button>')
+                .attr('title', 'Edit override')
+                .html('<i class="bi bi-pencil-square"></i>')
+                .toggle(hasActiveOverride(game))
+                .on('click', () => openOverrideEditor(game));
+            titleLine.append(pill);
+
+            cardOverlay.append(titleLine);
+
+            const description = $('<p class="card-text game-description mb-2"></p>');
             if (game.app_type === 'DLC') {
                 const small = $('<small></small>').text(`${game.name} | `);
                 description.append(small);
@@ -206,7 +346,7 @@
             description.append(small);
             cardOverlay.append(description);
 
-            const tagsContainer = $('<div class="tags-container"></div>');
+            const tagsContainer = $('<div class="tags-container d-flex gap-1 align-items-center"></div>');
 
             const typeBadgeClass = (game.owned === false) ? 'text-bg-warning' : 'text-bg-info';
             const typeBadge = $(`<span class="badge rounded-pill ${typeBadgeClass} game-tag"></span>`).text(game.app_type);
@@ -245,13 +385,19 @@
                 tagsContainer.append(dlcBadge);
             }
 
+            // Inline "Edit" entry point for non-overridden items as well
+            const quickEdit = $('<span class="badge rounded-pill text-bg-secondary game-tag" title="Edit override"></span>')
+                .html('<i class="bi bi-pencil-square"></i>')
+                .on('click', () => openOverrideEditor(game));
+            tagsContainer.append(quickEdit);
+
             cardOverlay.append(tagsContainer);
             card.append(cardOverlay);
             gameCol.append(card);
             gameGrid.append(gameCol);
         });
         // Update pagination
-        updatePaginationControls(filteredGames.length)
+        updatePaginationControls(filteredGames.length);
 
     }
 
@@ -259,11 +405,18 @@
         // Render icon view logic...
         const gameGrid = $('#gameGrid');
         gameGrid.empty(); // Clear existing games
+
+        // Guard: if filteredGames is not ready, do nothing
+        if (!Array.isArray(filteredGames) || filteredGames.length === 0) {
+            updatePaginationControls(0);
+            return;
+        }
+
         // Get games for the current page
-        start = (currentPage - 1) * itemsPerPage
-        end = start + itemsPerPage
-        baseGames = filteredGames.filter(game => game.app_type === 'BASE');
-        paginatedGames = baseGames.slice(start, end);
+        const start = (currentPage - 1) * itemsPerPage;
+        const end = start + itemsPerPage;
+        const baseGames = filteredGames.filter(game => game.app_type === 'BASE');
+        const paginatedGames = baseGames.slice(start, end);
 
         paginatedGames.forEach(game => {
             const icon = $('<img class="game-icon">').attr('src', game.iconUrl);
@@ -273,7 +426,7 @@
         // Adjust icon sizes based on the slider value
         adjustIconSizes(cardSize);
         // Update pagination
-        updatePaginationControls(baseGames.length)
+        updatePaginationControls(baseGames.length);
     }
 
     function getColumnsForCardSize(size) {
@@ -349,18 +502,29 @@
         $('.game-icon').css('width', `${iconSize}%`);
     }
 
+    // --- Filter persistence
     function saveFiltersToStorage() {
         const filters = {
             type: [],
+            ownership: [],
             update: [],
-            completion: []
+            completion: [],
+            special: []
         };
         if ($('#filterCheckBase').is(':checked')) filters.type.push('BASE');
         if ($('#filterCheckDlc').is(':checked')) filters.type.push('DLC');
+
+        if ($('#filterCheckOwned').is(':checked')) filters.ownership.push('Owned');
+        if ($('#filterCheckMissing').is(':checked')) filters.ownership.push('Missing');
+
         if ($('#filterCheckUpToDate').is(':checked')) filters.update.push('Up to date');
         if ($('#filterCheckMissingUpdate').is(':checked')) filters.update.push('Outdated');
+
         if ($('#filterCheckComplete').is(':checked')) filters.completion.push('Complete');
         if ($('#filterCheckMissingDlc').is(':checked')) filters.completion.push('Missing DLC');
+
+        if ($('#filterCheckUnrecognized').is(':checked')) filters.special.push('Unrecognized');
+        if ($('#filterCheckOverridden').is(':checked')) filters.special.push('Overridden');
 
         localStorage.setItem('activeFilters', JSON.stringify(filters));
     }
@@ -372,10 +536,18 @@
 
             $('#filterCheckBase').prop('checked', filters.type?.includes('BASE') || false);
             $('#filterCheckDlc').prop('checked', filters.type?.includes('DLC') || false);
+
+            $('#filterCheckOwned').prop('checked', filters.ownership?.includes('Owned') || false);
+            $('#filterCheckMissing').prop('checked', filters.ownership?.includes('Missing') || false);
+
             $('#filterCheckUpToDate').prop('checked', filters.update?.includes('Up to date') || false);
             $('#filterCheckMissingUpdate').prop('checked', filters.update?.includes('Outdated') || false);
+
             $('#filterCheckComplete').prop('checked', filters.completion?.includes('Complete') || false);
             $('#filterCheckMissingDlc').prop('checked', filters.completion?.includes('Missing DLC') || false);
+
+            $('#filterCheckUnrecognized').prop('checked', filters.special?.includes('Unrecognized') || false);
+            $('#filterCheckOverridden').prop('checked', filters.special?.includes('Overridden') || false);
 
             updateFilter();
             applyFilters();
@@ -386,7 +558,7 @@
             $('#textFilter').val(savedSearch);
             filterBySearchText(savedSearch);
         } else {
-            renderGames();
+            // Do not render here; initial render happens after dataReady to avoid empty first paint
         }
     }
 
@@ -406,10 +578,20 @@
             cardSize = parseInt(savedCardSize);
         }
 
-        // Fetch initial set of games and render
-        fetchGames().then(() => {
-            loadFiltersFromStorage();
-        });
+        // Fetch games and overrides first, then apply saved filters
+        Promise.all([fetchGames(), fetchOverrides()])
+          .then(() => { 
+              dataReady = true; 
+              filteredGames = games.slice(); // ensure initial page has data
+              loadFiltersFromStorage(); 
+              renderGames(); 
+          })
+          .catch(() => { 
+              dataReady = true; 
+              filteredGames = games.slice(); // ensure initial page has data even on partial failure
+              loadFiltersFromStorage(); 
+              renderGames(); 
+          });
 
         // Event listeners for items per page dropdown
         $('.items-per-page').click(function () {
@@ -446,11 +628,7 @@
             $(this).addClass("active");
             const view = $(this).data('view');
             localStorage.setItem('currentView', view)
-            if (view === 'card') {
-                currentView = 'card';
-            } else if (view === 'icon') {
-                currentView = 'icon';
-            }
+            currentView = view;
             renderGames(games);
         });
         
@@ -478,22 +656,22 @@
         $(document).on('click', '.popover', function (e) {
             e.stopPropagation(); // Prevent the click event from bubbling up
         });
-    
+
     });
 
     // Function to filter cards based on input text
     function filterBySearchText(attributeText) {
+        if (!dataReady) return;
         if (!attributeText) {
-            filteredGames = games;
+            filteredGames = games.slice();
         } else {
-            searchText = attributeText.toLowerCase();
-
+            const searchText = attributeText.toLowerCase();
             filteredGames = games.filter(game =>
                 game.app_id?.toLowerCase().includes(searchText) ||
                 game.title_id?.toLowerCase().includes(searchText) ||
                 game.name?.toLowerCase().includes(searchText) ||
                 game.title_id_name?.toLowerCase().includes(searchText)
-            )
+            );
         }
 
         currentPage = 1;
@@ -505,53 +683,28 @@
     const activeOwnershipFilters = new Set();
     const activeUpdateFilters = new Set();
     const activeCompletionFilters = new Set();
+    const activeSpecialFilters = new Set();
 
     function updateFilter() {
-        // $('#filterDropdownBtn').toggle();
-        if ($('#filterCheckBase').is(":checked")) {
-            activeTypeFilters.add('BASE');
-        } else {
-            activeTypeFilters.delete('BASE');
-        }
-        if ($('#filterCheckDlc').is(":checked")) {
-            activeTypeFilters.add('DLC');
-        } else {
-            activeTypeFilters.delete('DLC');
-        }
-        if ($('#filterCheckOwned').is(":checked")) {
-            activeOwnershipFilters.add('Owned');
-        } else {
-            activeOwnershipFilters.delete('Owned');
-        }
-        if ($('#filterCheckMissing').is(":checked")) {
-            activeOwnershipFilters.add('Missing');
-        } else {
-            activeOwnershipFilters.delete('Missing');
-        }
-        if ($('#filterCheckUpToDate').is(":checked")) {
-            activeUpdateFilters.add('Up to date');
-        }
-        else {
-            activeUpdateFilters.delete('Up to date');
-        }
-        if ($('#filterCheckMissingUpdate').is(":checked")) {
-            activeUpdateFilters.add('Outdated');
-        }
-        else {
-            activeUpdateFilters.delete('Outdated');
-        }
-        if ($('#filterCheckComplete').is(":checked")) {
-            activeCompletionFilters.add('Complete');
-        }
-        else {
-            activeCompletionFilters.delete('Complete');
-        }
-        if ($('#filterCheckMissingDlc').is(":checked")) {
-            activeCompletionFilters.add('Missing DLC');
-        }
-        else {
-            activeCompletionFilters.delete('Missing DLC');
-        }
+        // Type
+        $('#filterCheckBase').is(":checked") ? activeTypeFilters.add('BASE') : activeTypeFilters.delete('BASE');
+        $('#filterCheckDlc').is(":checked") ? activeTypeFilters.add('DLC') : activeTypeFilters.delete('DLC');
+
+        // Ownership
+        $('#filterCheckOwned').is(":checked") ? activeOwnershipFilters.add('Owned') : activeOwnershipFilters.delete('Owned');
+        $('#filterCheckMissing').is(":checked") ? activeOwnershipFilters.add('Missing') : activeOwnershipFilters.delete('Missing');
+
+        // Update
+        $('#filterCheckUpToDate').is(":checked") ? activeUpdateFilters.add('Up to date') : activeUpdateFilters.delete('Up to date');
+        $('#filterCheckMissingUpdate').is(":checked") ? activeUpdateFilters.add('Outdated') : activeUpdateFilters.delete('Outdated');
+
+        // Completion
+        $('#filterCheckComplete').is(":checked") ? activeCompletionFilters.add('Complete') : activeCompletionFilters.delete('Complete');
+        $('#filterCheckMissingDlc').is(":checked") ? activeCompletionFilters.add('Missing DLC') : activeCompletionFilters.delete('Missing DLC');
+
+        // Special
+        $('#filterCheckUnrecognized').is(":checked") ? activeSpecialFilters.add('Unrecognized') : activeSpecialFilters.delete('Unrecognized');
+        $('#filterCheckOverridden').is(":checked") ? activeSpecialFilters.add('Overridden') : activeSpecialFilters.delete('Overridden');
     }
 
     function findCommonElements(...arrays) {
@@ -571,46 +724,69 @@
 
     // Function to apply filters and show/hide game cards with animation
     function applyFilters() {
+        if (!dataReady) return;
 
-        if (activeTypeFilters.size === 0 && activeOwnershipFilters.size === 0 && activeUpdateFilters.size === 0 && activeCompletionFilters.size === 0) {
-            filteredGames = games;
+        if (
+            activeTypeFilters.size === 0 &&
+            activeOwnershipFilters.size === 0 &&
+            activeUpdateFilters.size === 0 &&
+            activeCompletionFilters.size === 0 &&
+            activeSpecialFilters.size === 0
+        ) {
+            filteredGames = games.slice();
         } else {
-            gamesFilteredByType = []
-            gamesFilteredByOwnership = []
-            gamesFilteredByUpdate = []
-            gamesFilteredByCompletion = []
+            let gamesFilteredByType = [];
+            let gamesFilteredByOwnership = [];
+            let gamesFilteredByUpdate = [];
+            let gamesFilteredByCompletion = [];
+            let gamesFilteredBySpecial = [];
+
+            const src = games;
 
             console.log(activeTypeFilters);
             if (activeTypeFilters.size > 0) {
-                filteredGames = [];
                 for (let type of activeTypeFilters) {
-                    gamesFilteredByType = gamesFilteredByType.concat(games.filter(game => game.app_type === type));
+                    gamesFilteredByType = gamesFilteredByType.concat(src.filter(game => game.app_type === type));
                 }
             }
 
             if (activeOwnershipFilters.has("Owned")) {
-                gamesFilteredByOwnership = gamesFilteredByOwnership.concat(games.filter(game => game.owned === true));
+                gamesFilteredByOwnership = gamesFilteredByOwnership.concat(src.filter(game => game.owned === true));
             }
             if (activeOwnershipFilters.has("Missing")) {
-                gamesFilteredByOwnership = gamesFilteredByOwnership.concat(games.filter(game => game.owned === false));
+                gamesFilteredByOwnership = gamesFilteredByOwnership.concat(src.filter(game => game.owned === false));
             }
 
             if (activeUpdateFilters.has("Up to date")) {
-                gamesFilteredByUpdate = gamesFilteredByUpdate.concat(games.filter(game => game.has_latest_version === true));
+                gamesFilteredByUpdate = gamesFilteredByUpdate.concat(src.filter(game => game.has_latest_version === true));
             }
             if (activeUpdateFilters.has("Outdated")) {
-                gamesFilteredByUpdate = gamesFilteredByUpdate.concat(games.filter(game => game.has_latest_version === false));
+                gamesFilteredByUpdate = gamesFilteredByUpdate.concat(src.filter(game => game.has_latest_version === false));
             }
             
             if (activeCompletionFilters.has("Complete")) {
-                gamesFilteredByCompletion = gamesFilteredByCompletion.concat(games.filter(game => game.has_all_dlcs === true));
+                gamesFilteredByCompletion = gamesFilteredByCompletion.concat(src.filter(game => game.has_all_dlcs === true));
             }
             if (activeCompletionFilters.has("Missing DLC")) {
-                gamesFilteredByCompletion = gamesFilteredByCompletion.concat(games.filter(game => game.has_all_dlcs === false));
+                gamesFilteredByCompletion = gamesFilteredByCompletion.concat(src.filter(game => game.has_all_dlcs === false));
+            }
+
+            // Special
+            if (activeSpecialFilters.has("Unrecognized")) {
+                gamesFilteredBySpecial = gamesFilteredBySpecial.concat(src.filter(game => isUnrecognizedGame(game)));
+            }
+            if (activeSpecialFilters.has("Overridden")) {
+                gamesFilteredBySpecial = gamesFilteredBySpecial.concat(src.filter(game => hasActiveOverride(game)));
             }
 
             // Find common elements
-            filteredGames = findCommonElements(games, gamesFilteredByType, gamesFilteredByOwnership, gamesFilteredByUpdate, gamesFilteredByCompletion);
+            filteredGames = findCommonElements(
+                games,
+                gamesFilteredByType,
+                gamesFilteredByOwnership,
+                gamesFilteredByUpdate,
+                gamesFilteredByCompletion,
+                gamesFilteredBySpecial);
         }
 
         currentPage = 1;
@@ -623,6 +799,90 @@
     //     applyFilters();
     // });
 
-    
+    // ---------- Override editor ----------
+    function openOverrideEditor(game) {
+        // Prefill with existing override (if any)
+        const k = keyForGame(game);
+        const ovr = k ? overridesByKey.get(k) : null;
+
+        $('#ovr-id').val(ovr?.id || '');
+        $('#ovr-title-id').val(game.title_id || '');
+        $('#ovr-file-basename').val(game.file_basename || '');
+        $('#ovr-file-name').val(game.file_basename);
+
+        $('#ovr-name').val(ovr?.name ?? (game.title_id_name || game.name || ''));
+        $('#ovr-publisher').val(ovr?.publisher ?? (game.publisher || ''));
+        $('#ovr-region').val(ovr?.region ?? '');
+        $('#ovr-description').val(ovr?.description ?? '');
+        $('#ovr-version').val(ovr?.version ?? '');
+
+        $('#btn-reset-override').toggle(!!ovr?.id);
+
+        overrideModal().show();
+    }
+
+    async function saveOverride() {
+        const id = $('#ovr-id').val().trim();
+        const title_id = $('#ovr-title-id').val().trim();
+        const file_basename = $('#ovr-file-basename').val().trim();
+
+        const body = {
+            name: nv($('#ovr-name').val()),
+            publisher: nv($('#ovr-publisher').val()),
+            region: nv($('#ovr-region').val()),
+            description: nv($('#ovr-description').val()),
+            version: numOrNull($('#ovr-version').val()),
+            enabled: true
+        };
+        if (title_id) body.title_id = title_id;
+        else if (file_basename) body.file_basename = file_basename;
+
+        let res;
+        if (id) {
+            res = await fetch(`/api/overrides/${id}`, {
+                method: 'PUT',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(body)
+            });
+        } else {
+            res = await fetch('/api/overrides', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(body)
+            });
+        }
+        if (!res.ok) {
+            alert('Failed to save override');
+            return;
+        }
+
+        await fetchOverrides();
+        // Re-apply filters (important for Overridden/Unrecognized)
+        applyFilters();
+        overrideModal().hide();
+    }
+
+    async function resetOverride() {
+        const id = $('#ovr-id').val().trim();
+        if (!id) return;
+        if (!confirm('Remove override and revert to default metadata?')) return;
+
+        const res = await fetch(`/api/overrides/${id}`, { method: 'DELETE' });
+        if (!res.ok) {
+            alert('Failed to delete override');
+            return;
+        }
+
+        await fetchOverrides();
+        applyFilters();
+        overrideModal().hide();
+    }
+
+    function nv(v){ const s = (v ?? '').toString().trim(); return s.length ? s : null; }
+    function numOrNull(v){ const s = (v ?? '').toString().trim(); return s ? Number(s) : null; }
+
+    document.getElementById('btn-save-override').addEventListener('click', saveOverride);
+    document.getElementById('btn-reset-override').addEventListener('click', resetOverride);
+
 </script>
 {% endblock %}

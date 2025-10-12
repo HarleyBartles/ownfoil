@@ -18,9 +18,10 @@ from auth import *
 import titles
 from utils import *
 from library import *
-from overrides_api import overrides_api, admin_overrides
+from overrides_api import overrides_api
 import titledb
 import os
+import re
 
 def init():
     global watcher
@@ -195,9 +196,7 @@ def create_app():
     login_manager.init_app(app)
 
     app.register_blueprint(auth_blueprint)
-
     app.register_blueprint(overrides_api)
-    app.register_blueprint(admin_overrides)
 
     return app
 
@@ -290,6 +289,7 @@ def index():
             shop["referrer"] = f"https://{request.verified_host}"
             
         shop["files"] = gen_shop_files(db)
+        shop["titledb"] = build_titledb_from_overrides()
 
         if app_settings['shop']['encrypt']:
             return Response(encrypt_shop(shop), mimetype='application/octet-stream')

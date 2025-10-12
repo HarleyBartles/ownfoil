@@ -2,11 +2,41 @@
 from flask import Blueprint, request, jsonify, render_template, abort
 from flask_login import login_required, current_user
 from werkzeug.exceptions import BadRequest, NotFound
-from sqlalchemy import and_, or_
+from sqlalchemy import and_, inspect, or_
 from datetime import datetime
 import os
+import re
+import titles as titles_lib
 
 from db import db, UserOverrides, Files
+
+hex16 = re.compile(r'^[0-9A-Fa-f]{16}$')
+
+def _clean_hex16(value):
+    if value is None:
+        return None
+    v = str(value).strip()
+    if v == "":
+        return None
+    # allow non-hex during entry (UI is lenient), but prefer to persist only valid 16-hex
+    return v.upper() if hex16.match(v) else v.upper()  # keep entered value; you can tighten if you want
+
+def _to_int_or_none(v):
+    if v in (None, ""):
+        return None
+    try:
+        n = int(v)
+        if n < 0:
+            return None
+        return n
+    except Exception:
+        return None
+
+def _nonempty(s):
+    if s is None:
+        return None
+    s = str(s).strip()
+    return s or None
 
 
 # ---------------------------------------------------------------------------
@@ -98,16 +128,41 @@ def get_override(oid: int):
 @login_required
 def create_override():
     require_admin()
-    data = _parse_json()
+    data = _parse_json() or {}
 
+    # Defaults / normalization
+    data.setdefault("enabled", True)
+
+    # Empty strings → None for text fields
+    for k in (
+        "file_basename", "name", "title_id", "app_id",
+        "publisher", "region", "description", "content_type",
+        "version", "icon_path", "banner_path"
+    ):
+        if k in data and isinstance(data[k], str) and not data[k].strip():
+            data[k] = None
+
+    # Normalize app_version (int or None)
+    if "app_version" in data:
+        try:
+            data["app_version"] = int(data["app_version"]) if data["app_version"] not in (None, "") else None
+        except (TypeError, ValueError):
+            data["app_version"] = None
+
+    # Require at least one targeting key after normalization
     if not any(data.get(k) for k in ("title_id", "file_basename", "app_id")):
         raise BadRequest("Provide at least one target: title_id, file_basename, or app_id.")
 
+    # Create + apply fields
     uo = UserOverrides()
     _apply_fields(uo, data)
+
+    # Timestamps
+    from datetime import datetime
     uo.created_at = datetime.utcnow()
     uo.updated_at = datetime.utcnow()
 
+    # Persist
     db.session.add(uo)
     try:
         db.session.commit()
@@ -117,18 +172,35 @@ def create_override():
 
     return jsonify(uo.as_dict()), 201
 
-
 @overrides_api.put("/<int:oid>")
 @login_required
 def update_override(oid: int):
     require_admin()
-    data = _parse_json()
+    data = _parse_json() or {}
+
+    # Empty strings → None for text fields
+    for k in (
+        "file_basename", "name", "title_id", "app_id",
+        "publisher", "region", "description", "content_type",
+        "version", "icon_path", "banner_path"
+    ):
+        if k in data and isinstance(data[k], str) and not data[k].strip():
+            data[k] = None
+
+    # Normalize app_version (int or None)
+    if "app_version" in data:
+        try:
+            data["app_version"] = int(data["app_version"]) if data["app_version"] not in (None, "") else None
+        except (TypeError, ValueError):
+            data["app_version"] = None
 
     uo = UserOverrides.query.get(oid)
     if not uo:
         raise NotFound("Override not found.")
 
+    # Apply updated fields
     _apply_fields(uo, data)
+    from datetime import datetime
     uo.updated_at = datetime.utcnow()
 
     try:
@@ -138,7 +210,6 @@ def update_override(oid: int):
         raise BadRequest(f"Could not update override: {e}")
 
     return jsonify(uo.as_dict())
-
 
 @overrides_api.delete("/<int:oid>")
 @login_required
@@ -152,93 +223,3 @@ def delete_override(oid: int):
     db.session.commit()
     return jsonify({"ok": True, "deleted_id": oid})
 
-
-# ---------------------------------------------------------------------------
-# ADMIN PAGE BLUEPRINT
-# ---------------------------------------------------------------------------
-
-admin_overrides = Blueprint("admin_overrides", __name__, url_prefix="/admin")
-
-
-from sqlalchemy import and_, inspect
-import titles as titles_lib  # add this import near the top
-
-@admin_overrides.route("/overrides", methods=["GET"])
-@login_required
-def overrides_page():
-    if not getattr(current_user, "is_admin", False):
-        abort(403)
-
-    from sqlalchemy import or_, inspect, tuple_
-    # Problem buckets we care about
-    BAD_TYPES = ["not_in_titledb", "exception", "unidentified"]
-
-    files_q = (
-        Files.query
-        .filter(
-            or_(
-                Files.identified == False,  # noqa: E712
-                Files.identification_type.in_(BAD_TYPES),
-                Files.identification_error.isnot(None),
-            )
-        )
-        .order_by(Files.size.desc().nullslast())
-    )
-
-    inspector = inspect(db.engine)
-    has_uo = inspector.has_table("user_overrides")
-
-    files = files_q.all()
-    rows = []
-
-    if not files:
-        return render_template("overrides.html", items=[])
-
-    # ---- Bulk-load overrides to avoid N+1 ----
-    ov_by_filename = {}
-    ov_by_key = {}
-
-    if has_uo:
-        # Build lookup keys from files
-        filenames = {f.filename for f in files if getattr(f, "filename", None)}
-        keys = {(getattr(f, "title_id", None), getattr(f, "app_id", None), getattr(f, "app_version", None))
-                for f in files}
-        keys.discard((None, None, None))
-
-        q = UserOverrides.query.filter(UserOverrides.enabled.is_(True))
-        # Load by filename in one go
-        if filenames:
-            for o in q.filter(UserOverrides.file_basename.in_(filenames)).all():
-                ov_by_filename[o.file_basename] = o
-        # Load by (title_id, app_id, app_version) in one go
-        if keys:
-            tups = list(keys)
-            for o in q.filter(
-                tuple_(UserOverrides.title_id, UserOverrides.app_id, UserOverrides.app_version).in_(tups)
-            ).all():
-                ov_by_key[(o.title_id, o.app_id, o.app_version)] = o
-
-    # ---- Build response rows ----
-    for f in files:
-        ov = None
-        k = (getattr(f, "title_id", None), getattr(f, "app_id", None), getattr(f, "app_version", None))
-        if k in ov_by_key:
-            ov = ov_by_key[k]
-        elif getattr(f, "filename", None) in ov_by_filename:
-            ov = ov_by_filename[f.filename]
-
-        rows.append({
-            "file_basename": getattr(f, "filename", None),
-            "size": getattr(f, "size", None),
-            "override_id": getattr(ov, "id", None) if ov else None,
-            "override_name": getattr(ov, "name", None) if ov else None,
-            "identification_type": getattr(f, "identification_type", None),
-            "identification_error": getattr(f, "identification_error", None),
-            "status": "Unidentified",  # keep your current label
-            # include keys so the UI can save robustly
-            "title_id": getattr(f, "title_id", None),
-            "app_id": getattr(f, "app_id", None),
-            "app_version": getattr(f, "app_version", None),
-        })
-
-    return render_template("overrides.html", items=rows)

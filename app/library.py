@@ -5,7 +5,7 @@ from db import *
 import titles as titles_lib
 import datetime
 from pathlib import Path
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 from utils import *
 
 def _apply_override_to_title_dict(title_dict):
@@ -231,14 +231,16 @@ def scan_library_path(library_path):
 def get_files_to_identify(library_id, *, force_all: bool = False):
     q = Files.query.filter(Files.library_id == library_id)
 
+    stale_cutoff = datetime.datetime.utcnow() - datetime.timedelta(days=7)
+
     if not force_all:
         q = q.filter(
             or_(
                 Files.identified.is_(None),
                 Files.identification_type.is_(None),
                 Files.last_attempt.is_(None),
-                # optional: rescan stale entries older than 7 days
-                Files.last_attempt < func.now() - func.cast(7, db.Interval)  # adapt if not using Interval
+                # rescan stale entries older than 7 days
+                Files.last_attempt < stale_cutoff,
             )
         )
 
@@ -256,7 +258,7 @@ def identify_library_files(library):
         library_path = library
         library_id = get_library_id(library_path)
 
-    files_to_identify = get_files_to_identify(library_id, force_all=True)
+    files_to_identify = get_files_to_identify(library_id)
     nb_to_identify = len(files_to_identify)
 
     # Load TitleDB once so we can check presence of title_ids quickly
@@ -544,6 +546,68 @@ def get_library_status(title_id):
     }
     return library_status
 
+LIBRARY_SCHEMA_VERSION = "v3-overrides-in-hash"
+
+def overrides_fingerprint():
+    """
+    Create a fingerprint that changes whenever active overrides change.
+    Prefer count + MAX(updated_at) if you have updated_at; otherwise hash the enabled rows.
+    """
+    try:
+        # If your UserOverrides has an updated_at column:
+        from db import UserOverrides
+        from sqlalchemy import func
+
+        q = db.session.query(
+            func.count(UserOverrides.id),
+            func.max(UserOverrides.updated_at)
+        ).filter(UserOverrides.enabled == True)
+
+        count_, max_updated = q.one()
+        latest = max_updated.isoformat() if max_updated else "none"
+        return f"{count_}:{latest}"
+    except Exception:
+        # Fallback: hash over enabled rows' salient fields (slower but robust)
+        try:
+            from db import UserOverrides
+            rows = (
+                db.session.query(UserOverrides)
+                .filter(UserOverrides.enabled == True)
+                .all()
+            )
+            h = hashlib.md5()
+            for r in sorted(
+                rows,
+                key=lambda x: (str(getattr(x, "id", "")) or "", str(getattr(x, "title_id", "")) or "", str(getattr(x, "file_basename", "")) or "")
+            ):
+                # include fields that affect effective titledb output
+                parts = [
+                    str(getattr(r, "id", "")),
+                    str(getattr(r, "title_id", "") or ""),
+                    str(getattr(r, "file_basename", "") or ""),
+                    str(getattr(r, "name", "") or ""),
+                    str(getattr(r, "publisher", "") or ""),
+                    str(getattr(r, "region", "") or ""),
+                    str(getattr(r, "description", "") or ""),
+                    str(getattr(r, "version", "") or ""),
+                    str(getattr(r, "icon_path", "") or ""),
+                    str(getattr(r, "banner_path", "") or ""),
+                    str(getattr(r, "enabled", True)),
+                ]
+                h.update("|".join(parts).encode("utf-8", errors="ignore"))
+            return f"rows:{len(rows)}:md5:{h.hexdigest()}"
+        except Exception:
+            # Last resort: don't break cache logic
+            return "rows:0:md5:none"
+
+def compute_library_hash():
+    """
+    Combined hash that considers the Apps table, active overrides, and schema version.
+    """
+    base = compute_apps_hash()
+    ovr = overrides_fingerprint()
+    return f"{base}|ovr:{ovr}|schema:{LIBRARY_SCHEMA_VERSION}"
+
 def compute_apps_hash():
     """
     Computes a hash of all Apps table content to detect changes in library state.
@@ -572,7 +636,7 @@ def is_library_unchanged():
     if not saved_library.get('hash'):
         return False
 
-    current_hash = compute_apps_hash()
+    current_hash = compute_library_hash()  # <-- include overrides + schema
     return saved_library['hash'] == current_hash
 
 def save_library_to_disk(library_data):
@@ -594,12 +658,17 @@ def load_library_from_disk():
 
 def generate_library():
     """Generate the game library from Apps table, using cached version if unchanged"""
-    # if is_library_unchanged():
-    #     saved_library = load_library_from_disk()
-    #     if saved_library:
-    #         return saved_library['library']
+    if is_library_unchanged():
+        saved_library = load_library_from_disk()
+        if saved_library:
+            return saved_library['library']
     
-    logger.info(f'Generating library ...')
+    # Build override index once for O(1) lookups
+    # Lazy import to avoid circular import at module import time
+    from overrides import build_override_index
+    override_index = build_override_index()
+
+    logger.info('Generating library ...')
     titles_lib.load_titledb()
     titles = get_all_apps()
     games_info = []
@@ -687,11 +756,50 @@ def generate_library():
             titleid_info = titles_lib.get_game_info(title['title_id'])
             title['title_id_name'] = titleid_info['name'] if titleid_info else 'Unrecognized'
             title = _apply_override_to_title_dict(title)
-            
+
+        # ---------- SPECIAL FILTER ANNOTATIONS (for UI) ----------
+        # identified / identification_type fallbacks (if not already present)
+        identified = title.get('identified')
+        identification_type = (title.get('identification_type') or '').lower()
+
+        if identified is None:
+            # If unresolved name, treat as unrecognized
+            if (title.get('title_id_name') or '').strip().lower() == 'unrecognized':
+                identified = False
+                if not identification_type:
+                    identification_type = 'not_in_titledb'
+            else:
+                identified = True
+        if not identification_type:
+            identification_type = 'cnmt' if identified else 'unidentified'
+
+        title['identified'] = bool(identified)
+        title['identification_type'] = identification_type
+
+        # has_override via index
+        file_basename = title.get('file_basename') or title.get('filename') or title.get('file_basename_hint')
+        tid = title.get('title_id') or title.get('id')
+
+        has_override = False
+        if tid and tid in override_index['title_ids']:
+            has_override = True
+        elif file_basename and file_basename in override_index['basenames']:
+            has_override = True
+
+        title['has_override'] = has_override
+
+        # Derived flag for Unrecognized filter
+        title['is_unrecognized'] = (
+            (not title['identified']) or
+            (title['identification_type'] in ('not_in_titledb', 'exception', 'unidentified')) or
+            has_override
+        )
+        # ---------------------------------------------------------
+
         games_info.append(title)
     
     library_data = {
-        'hash': compute_apps_hash(),
+        'hash': compute_library_hash(),  # <-- include overrides + schema
         'library': sorted(games_info, key=lambda x: (
             "title_id_name" not in x, 
             x.get("title_id_name", "Unrecognized") or "Unrecognized", 
@@ -704,6 +812,6 @@ def generate_library():
     titles_lib.identification_in_progress_count -= 1
     titles_lib.unload_titledb()
 
-    logger.info(f'Generating library done.')
+    logger.info('Generating library done.')
 
     return library_data['library']

@@ -109,3 +109,18 @@ def merge_with_override(
         app_version=app_version or base.get("app_version"),
     )
     return apply_user_override(base, uo)
+
+
+def build_override_index():
+    """
+    Returns two sets for O(1) membership checks of active overrides.
+    """
+    db, UserOverrides = _models()
+    rows = (
+        db.session.query(UserOverrides)
+        .filter(UserOverrides.enabled == True)
+        .all()
+    )
+    title_ids = {r.title_id for r in rows if r.title_id}
+    basenames = {r.file_basename for r in rows if r.file_basename}
+    return {"title_ids": title_ids, "basenames": basenames}

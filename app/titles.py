@@ -318,7 +318,7 @@ def get_game_info(title_id: str):
             'name': 'Unrecognized',
             'bannerUrl': '//placehold.it/400x200',
             'iconUrl': '',
-            'id': title_id + ' not found in titledb',
+            'id': title_id,
             'category': '',
         }
 

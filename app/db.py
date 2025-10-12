@@ -10,7 +10,7 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 from flask_login import UserMixin
 from alembic import command
-import os, sys
+import os, sys, re
 import shutil
 import logging
 import datetime
@@ -293,6 +293,11 @@ def get_all_non_identified_files_from_library(library_id):
 def get_files_with_identification_from_library(library_id, identification_type):
     return Files.query.filter_by(library_id=library_id, identification_type=identification_type).all()
 
+def _safe_name(s: str) -> str:
+    # strip filesystem-unfriendly chars; Tinfoil only needs readable text
+    s = (s or "").strip()
+    return re.sub(r'[\\/:*?"<>|]+', '', s)  # remove Windows-illegal chars
+
 def get_shop_files():
     from overrides import merge_with_override
     shop_files = []
@@ -317,32 +322,54 @@ def get_shop_files():
         }
 
         # Apply override (if any)
-        merged = merge_with_override(base_meta,)
+        merged = merge_with_override(base_meta)
 
-        # Recompute filename if we received a friendly name override and the file is unidentified
-        if not file.identified and merged.get("name"):
-            # Show the friendly name instead of "(unidentified)"
-            final_filename = f"{merged['name']}.{file.extension}"
-        else:
-            if file.identified:
-                if app:
-                    if file.multicontent or file.extension.startswith('x'):
-                        title_id = app.title.title_id
-                        final_filename = f"[{title_id}].{file.extension}"
-                    else:
-                        final_filename = f"[{app.app_id}][v{app.app_version}].{file.extension}"
-                else:
-                    final_filename = file.filename.replace(f'.{file.extension}', '') + ' (unidentified).' + file.extension
+        o_name = merged.get("name")
+        o_app_id = merged.get("app_id")
+        o_title_id = merged.get("title_id")
+        o_app_ver = merged.get("app_version")
+
+        ext = file.extension
+
+        # Build the bracket part first (this is what Tinfoil parses)
+        bracket = None
+        if o_app_id:
+            v = 0 if (o_app_ver is None or str(o_app_ver).strip() == "") else int(o_app_ver)
+            bracket = f"[{o_app_id}][v{v}]"
+        elif o_title_id:
+            bracket = f"[{o_title_id}]"
+        elif file.identified and app:
+            if file.multicontent or ext.startswith('x'):
+                bracket = f"[{app.title.title_id}]"
             else:
-                final_filename = file.filename.replace(f'.{file.extension}', '') + ' (unidentified).' + file.extension
+                bracket = f"[{app.app_id}][v{app.app_version}]"
 
-        shop_files.append({
+        # If we still don’t have a bracket, fall back to original (Tinfoil may skip)
+        if not bracket:
+            final_filename = file.filename
+        else:
+            # Prepend human-readable title with a space after so search finds it
+            prefix = f"{_safe_name(o_name)} " if o_name else ""
+            final_filename = f"{prefix}{bracket}.{ext}"
+
+        entry = {
             "id": file.id,
             "filename": final_filename,
             "size": file.size,
-            # optional: bubble up whether an override affected this entry
             "overridden": merged.get("overridden", False),
-        })
+        }
+
+        if o_name:
+            entry["name"] = o_name
+            entry["title"] = o_name
+        if o_app_id:
+            entry["app_id"] = o_app_id
+        if o_title_id:
+            entry["title_id"] = o_title_id
+        if o_app_ver is not None:
+            entry["app_version"] = o_app_ver
+
+        shop_files.append(entry)
 
     return shop_files
 
