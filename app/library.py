@@ -791,8 +791,7 @@ def generate_library():
         # Derived flag for Unrecognized filter
         title['is_unrecognized'] = (
             (not title['identified']) or
-            (title['identification_type'] in ('not_in_titledb', 'exception', 'unidentified')) or
-            has_override
+            (title['identification_type'] in ('not_in_titledb', 'exception', 'unidentified'))
         )
         # ---------------------------------------------------------
 

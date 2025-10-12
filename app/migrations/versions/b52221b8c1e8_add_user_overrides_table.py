@@ -1,9 +1,3 @@
-"""bridge: lost revision b52221b8c1e8
-
-This is a no-op placeholder so Alembic can locate the missing revision id.
-It intentionally does nothing.
-"""
-
 from alembic import op
 import sqlalchemy as sa
 
