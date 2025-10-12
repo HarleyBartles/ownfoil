@@ -218,6 +218,7 @@
     const overridesByKey = new Map();
     const overrideModal = () => bootstrap.Modal.getOrCreateInstance('#overrideEditorModal');
 
+    // --- Helpers to correlate overrides <-> games and mutate UI state ---
     function keyForGame(game) {
         if (game?.title_id) return game.title_id;
         if (game?.file_basename) return 'file:' + game.file_basename;
@@ -229,45 +230,83 @@
         return '';
     }
 
+    // Apply (or remove) a single override onto matching games in memory.
+    // - Only overlays display fields (e.g., name/title_id_name) and has_override.
+    // - Preserves is_unrecognized flag as-is.
+    function applyOverrideToGamesByKey(key) {
+        if (!key) return;
+        const ovr = overridesByKey.get(key) || null;
+        const affecteds = games.filter(g => keyForGame(g) === key);
+
+        affecteds.forEach(g => {
+            if (!g._orig) {
+                g._orig = {
+                    name: g.name,
+                    title_id_name: g.title_id_name
+                };
+            }
+
+            if (ovr && ovr.enabled !== false) {
+                if (ovr.name && typeof ovr.name === 'string' && ovr.name.trim().length) {
+                    g.title_id_name = ovr.name;
+                    g.name = ovr.name;
+                }
+            } else {
+                // revert just the display fields; leave has_override alone (API is source of truth)
+                if (g._orig) {
+                    g.title_id_name = g._orig.title_id_name;
+                    g.name = g._orig.name;
+                }
+            }
+        });
+    }
+
+    // Re-apply all overrides (fallback use, e.g., after bulk fetch)
+    function reapplyAllOverridesToGames() {
+        const keys = new Set();
+        games.forEach(g => keys.add(keyForGame(g)));
+        keys.forEach(k => applyOverrideToGamesByKey(k));
+    }
+
     async function fetchOverrides() {
         try {
             const res = await fetch('/api/overrides', { cache: 'no-store' });
             if (!res.ok) {
-                // Resolve quietly on non-OK responses
                 overridesByKey.clear();
                 return;
             }
             const list = await res.json();
             overridesByKey.clear();
-            (Array.isArray(list) ? list : []).forEach(o => {
+            (Array.isArray(list.items) ? list.items : []).forEach(o => {
                 const k = keyForOverride(o);
                 if (k) overridesByKey.set(k, o);
             });
+            // Overlay into current games after fetching
+            reapplyAllOverridesToGames();
         } catch {
-            // Network error / hang -> just resolve; don't throw
             overridesByKey.clear();
         }
     }
 
-    const hasActiveOverride = (game) => game.has_override;
+    const hasActiveOverride = (game) => !!(game && game.has_override);
 
-    const isUnrecognizedGame = (game) => game.is_unrecognized;
+    const isUnrecognizedGame = (game) => !!(game && game.is_unrecognized);
 
     function fetchGames() {
         return new Promise((resolve) => {
             $.get(`/api/titles`, function (data) {
-            const list =Array.isArray(data?.games)   ? data.games : [];
+                const list = Array.isArray(data?.games) ? data.games : [];
 
-            totalGames   = Number.isFinite(data?.total) ? data.total : list.length;
-            games        = list;
-            filteredGames = games.slice();  // keep a copy for initial render
-            resolve();
+                totalGames    = Number.isFinite(data?.total) ? data.total : list.length;
+                games         = list;
+                filteredGames = games.slice();  // shallow copy
+
+                resolve();
             }).fail(function () {
-            // Graceful fallback on first load (still render empty state)
-            totalGames    = 0;
-            games         = [];
-            filteredGames = [];
-            resolve(); // resolve (don't reject) so the UI can proceed
+                totalGames    = 0;
+                games         = [];
+                filteredGames = [];
+                resolve();
             });
         });
     }
@@ -606,10 +645,16 @@
         }
 
         // Fetch games and overrides first, then apply saved filters
-        fetchOverrides();
-        fetchGames()
-            .then(() => { loadFiltersFromStorage(); })
-            .catch(() => { loadFiltersFromStorage(); });
+        Promise.all([fetchOverrides(), fetchGames()])
+            .then(() => {
+                // Now that both are ready, overlay names without touching has_override
+                reapplyAllOverridesToGames();
+                loadFiltersFromStorage();
+            })
+            .catch(() => {
+                // even on failure, try to render something
+                loadFiltersFromStorage();
+            });
 
         // Event listeners for items per page dropdown
         $('.items-per-page').click(function () {
@@ -761,7 +806,6 @@
             let gamesFilteredByCompletion = [];
             let gamesFilteredBySpecial = [];
 
-            console.log(activeTypeFilters);
             if (activeTypeFilters.size > 0) {
                 for (let type of activeTypeFilters) {
                     gamesFilteredByType = gamesFilteredByType.concat(games.filter(game => game.app_type === type));
@@ -811,12 +855,12 @@
         currentPage = 1;
         renderGames();
 
+        // If user has a search term typed, re-apply it to the updated dataset
+        const savedSearch = $('#textFilter').val();
+        if (savedSearch && savedSearch.trim().length) {
+            filterBySearchText(savedSearch);
+        }
     }
-
-    // $('#btnApplyFilters').on('click', function () {
-    //     updateFilter();
-    //     applyFilters();
-    // });
 
     // ---------- Override editor ----------
     function openOverrideEditor(game) {
@@ -840,6 +884,27 @@
         overrideModal().show();
     }
 
+    // Utility: normalize string to null if blank
+    function nv(v){ const s = (v ?? '').toString().trim(); return s.length ? s : null; }
+    function numOrNull(v){ const s = (v ?? '').toString().trim(); return s ? Number(s) : null; }
+
+    // After a successful save/delete, update in-memory map and affected game objects, then re-render.
+    function finishOverrideMutationAndRefresh(modifiedKey) {
+        // Update local has_override to match current map presence
+        const has = !!(modifiedKey && overridesByKey.has(modifiedKey));
+        games
+            .filter(g => keyForGame(g) === modifiedKey)
+            .forEach(g => { g.has_override = has; });
+
+        // Apply name overlay (doesn't touch has_override)
+        applyOverrideToGamesByKey(modifiedKey);
+
+        // Re-apply filters and render
+        applyFilters();
+
+        overrideModal().hide();
+    }
+
     async function saveOverride() {
         const id = $('#ovr-id').val().trim();
         const title_id = $('#ovr-title-id').val().trim();
@@ -856,29 +921,49 @@
         if (title_id) body.title_id = title_id;
         else if (file_basename) body.file_basename = file_basename;
 
+        const key = title_id ? title_id : (file_basename ? ('file:' + file_basename) : '');
+
         let res;
-        if (id) {
-            res = await fetch(`/api/overrides/${id}`, {
-                method: 'PUT',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify(body)
-            });
-        } else {
-            res = await fetch('/api/overrides', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify(body)
-            });
+        try {
+            if (id) {
+                res = await fetch(`/api/overrides/${id}`, {
+                    method: 'PUT',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(body)
+                });
+            } else {
+                res = await fetch('/api/overrides', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(body)
+                });
+            }
+        } catch (e) {
+            alert('Failed to save override');
+            return;
         }
+
         if (!res.ok) {
             alert('Failed to save override');
             return;
         }
 
+        // Try to get the saved override from response; if not present, fall back to a fresh fetch
+        let saved = null;
+        try { saved = await res.json(); } catch { /* some APIs return no body */ }
+
+        if (saved && (saved.title_id || saved.file_basename)) {
+            const k = keyForOverride(saved);
+            if (k) {
+                overridesByKey.set(k, saved);
+                finishOverrideMutationAndRefresh(k);
+                return;
+            }
+        }
+
+        // Fallback: refetch the whole overrides list, then refresh
         await fetchOverrides();
-        // Re-apply filters (important for Overridden/Unrecognized)
-        applyFilters();
-        overrideModal().hide();
+        finishOverrideMutationAndRefresh(key);
     }
 
     async function resetOverride() {
@@ -886,19 +971,32 @@
         if (!id) return;
         if (!confirm('Remove override and revert to default metadata?')) return;
 
-        const res = await fetch(`/api/overrides/${id}`, { method: 'DELETE' });
-        if (!res.ok) {
+        try {
+            const res = await fetch(`/api/overrides/${id}`, { method: 'DELETE' });
+            if (!res.ok) {
+                alert('Failed to delete override');
+                return;
+            }
+        } catch {
             alert('Failed to delete override');
             return;
         }
 
-        await fetchOverrides();
-        applyFilters();
-        overrideModal().hide();
-    }
+        // Figure out which key was affected before we refetch
+        const title_id = $('#ovr-title-id').val().trim();
+        const file_basename = $('#ovr-file-basename').val().trim();
+        const key = title_id ? title_id : (file_basename ? ('file:' + file_basename) : '');
 
-    function nv(v){ const s = (v ?? '').toString().trim(); return s.length ? s : null; }
-    function numOrNull(v){ const s = (v ?? '').toString().trim(); return s ? Number(s) : null; }
+        // Update local map: remove key and update UI immediately
+        if (key && overridesByKey.has(key)) {
+            overridesByKey.delete(key);
+        } else {
+            // If we don't know, just refresh overrides to stay in sync
+            await fetchOverrides();
+        }
+
+        finishOverrideMutationAndRefresh(key);
+    }
 
     $('#btn-save-override').click(saveOverride);
     $('#btn-reset-override').click(resetOverride);
