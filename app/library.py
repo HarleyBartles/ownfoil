@@ -592,6 +592,82 @@ def load_base_library():
     # Hash changed or cache missing/corrupt -> regenerate
     return generate_base_library()
 
+def _infer_file_basename_for_app(app_id: str, app_version: str | int | None) -> str | None:
+    """
+    Return a representative file basename for the given app (id+version),
+    using the Apps.files relationship. If multiple files are linked, prefer the
+    most recently identified one; otherwise just pick a deterministic first.
+    """
+    if not app_id:
+        return None
+
+    app_row = Apps.query.filter_by(app_id=app_id, app_version=str(app_version or "0")).first()
+    if not app_row or not getattr(app_row, "files", None):
+        return None
+
+    def _score(f):
+        # Prefer latest identification attempt; fall back to the earliest date
+        return (f.last_attempt or datetime.datetime.min,)
+
+    best = sorted(app_row.files, key=_score, reverse=True)[0]
+
+    # Prefer Files.filename; fall back to basename(filepath)
+    if getattr(best, "filename", None):
+        return best.filename
+    if getattr(best, "filepath", None):
+        return os.path.basename(best.filepath)
+    return None
+
+def _add_files_without_apps(games_info):
+    unid_files = Files.query.filter(
+        or_(
+            Files.identified.is_(False),
+            Files.identification_type.in_(["unidentified", "exception"])
+        )
+    ).all()
+
+    for f in unid_files:
+        # If this file is already linked to an App it will already be represented; skip here
+        if getattr(f, "apps", None):
+            try:
+                if len(f.apps) > 0:
+                    continue
+            except Exception:
+                # if relationship not configured to be immediately usable, just continue
+                pass
+
+        fname = f.filename or (os.path.basename(f.filepath) if f.filepath else None)
+
+        games_info.append({
+            # No app or title linkage
+            'app_id': None,
+            'app_version': None,
+            'app_type': APP_TYPE_BASE,        # treat as base-ish for filtering
+            'title_id': None,
+            'title_id_name': 'Unrecognized',
+
+            # Identification flags
+            'identified': False,
+            'identification_type': (f.identification_type or 'unidentified'),
+            'is_unrecognized': True,
+
+            # What the UI needs
+            'file_basename': fname,
+            'filename': fname,
+            'file_basename_hint': fname,
+
+            # Artwork
+            'bannerUrl': 'https://placehold.co/400x225/png?text=Image+Unavailable',
+            'iconUrl': 'https://placehold.co/400x400/png?text=Image+Unavailable',
+
+            # Other fields the UI expects to exist
+            'owned': True,
+            'has_latest_version': True,
+            'has_all_dlcs': True,
+            'version': [],
+            'name': 'Unrecognized'
+        })
+
 def generate_base_library():
     """Generate the BASE game library from Apps table (NO overrides), and cache it to disk."""
     logger.info('Generating BASE library ...')
@@ -682,7 +758,15 @@ def generate_base_library():
                 titleid_info = titles_lib.get_game_info(title['title_id'])
                 title['title_id_name'] = titleid_info['name'] if titleid_info else 'Unrecognized'
 
+            title['file_basename'] = _infer_file_basename_for_app(
+                title.get('app_id'),
+                title.get('app_version')
+            )
+            # Also add a hint key used by your downstream fallback in _compute_ui_flags_and_overrides
+            title['file_basename_hint'] = title['file_basename']
             games_info.append(title)
+        
+        _add_files_without_apps(games_info)
 
         library_data = {
             'hash': compute_apps_hash(),
@@ -796,23 +880,21 @@ def _apply_default_ui_flags(library_list: list[dict]) -> list[dict]:
         dst = src.copy()
         dst.setdefault("has_override", False)
 
-        # Default UI flags
         identified = dst.get("identified")
+        ident_type = (dst.get("identification_type") or "").lower()
+
         if identified is None:
             identified = (dst.get("title_id_name") or "").strip().lower() != "unrecognized"
             if not identified and not ident_type:
                 ident_type = "not_in_titledb"
 
-        ident_type = (dst.get("identification_type") or "").lower()
         if not ident_type:
             ident_type = "cnmt" if identified else "unidentified"
 
         dst["identified"] = bool(identified)
         dst["identification_type"] = ident_type
         dst["is_unrecognized"] = (
-            not dst["identified"]
-            or ident_type in ("not_in_titledb", "exception", "unidentified")
+            not dst["identified"] or ident_type in ("not_in_titledb", "exception", "unidentified")
         )
         out.append(dst)
-
     return out
