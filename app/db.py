@@ -37,7 +37,7 @@ def get_current_db_version():
     
 def create_db_backup():
     current_revision = get_current_db_version()
-    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    timestamp = datetime.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
     backup_filename = f".backup_v{current_revision}_{timestamp}.db"
     backup_path = os.path.join(CONFIG_DIR, backup_filename)
     shutil.copy2(DB_FILE, backup_path)
@@ -79,7 +79,7 @@ class Files(db.Model):
     identification_type = db.Column(db.String)
     identification_error = db.Column(db.String)
     identification_attempts = db.Column(db.Integer, default=0)
-    last_attempt = db.Column(db.DateTime, default=datetime.datetime.now())
+    last_attempt = db.Column(db.DateTime, default=datetime.datetime.utcnow())
 
     library = db.relationship('Libraries', backref=db.backref('files', lazy=True, cascade="all, delete-orphan"))
 
@@ -414,7 +414,7 @@ def get_library_file_paths(library_id):
 
 def set_library_scan_time(library_id, scan_time=None):
     library = get_library(library_id)
-    library.last_scan = scan_time or datetime.datetime.now()
+    library.last_scan = scan_time or datetime.datetime.utcnow()
     db.session.commit()
 
 def get_all_titles():
@@ -516,7 +516,7 @@ def delete_files_by_library(library_path):
     errors = []
     try:
         # Find all files with the given library
-        files_to_delete = Files.query.filter_by(library=library_path).all()
+        files_to_delete = Files.query.filter_by(library_id=get_library_id(library_path)).all()
         
         # Update Apps table before deleting files
         total_apps_updated = 0

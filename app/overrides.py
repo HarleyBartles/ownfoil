@@ -113,7 +113,7 @@ def merge_with_override(
 
 def build_override_index():
     """
-    Returns two sets for O(1) membership checks of active overrides.
+    Returns sets for O(1) membership checks of active overrides.
     """
     db, UserOverrides = _models()
     rows = (
@@ -121,6 +121,31 @@ def build_override_index():
         .filter(UserOverrides.enabled == True)
         .all()
     )
-    title_ids = {r.title_id for r in rows if r.title_id}
-    basenames = {r.file_basename for r in rows if r.file_basename}
-    return {"title_ids": title_ids, "basenames": basenames}
+
+    title_ids = set()
+    basenames = set()
+    by_title_id = {}
+    by_basename = {}
+    by_appver = {}
+
+    for r in rows:
+        d = r.as_dict()
+
+        if r.title_id:
+            title_ids.add(r.title_id)
+            by_title_id[r.title_id] = d
+
+        if r.file_basename:
+            basenames.add(r.file_basename)
+            by_basename[r.file_basename] = d
+
+        if r.app_id and r.app_version is not None:
+            by_appver[(r.app_id, str(r.app_version))] = d
+
+    return {
+        "title_ids": title_ids,
+        "basenames": basenames,
+        "by_title_id": by_title_id,
+        "by_basename": by_basename,
+        "by_appver": by_appver,
+    }
