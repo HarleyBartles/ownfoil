@@ -1,12 +1,14 @@
-import os
+import datetime
+import json
 import hashlib
+import os
+
+from pathlib import Path
+from sqlalchemy import or_
+
 from constants import *
 from db import *
 import titles as titles_lib
-import datetime
-from overrides import build_override_index
-from pathlib import Path
-from sqlalchemy import or_
 from utils import *
 
 def add_library_complete(app, watcher, path):
@@ -561,25 +563,19 @@ def load_library_from_disk():
 
 def generate_library():
     """
-    Public entry-point for routes: load BASE library, apply overrides in-memory,
-    compute UI flags, and return the merged list (NOT cached to disk).
+    Public entry-point for routes:
+    
+    - Load BASE library from disk if unchanged,
+    - Apply UI flags
+    - Return the list used by the API layer.
     """
-    # 1) Load base (disk) or regenerate if hash changed
+    # Load base from disk or regenerate if hash changed
     base = load_base_library()  # {'hash': ..., 'library': [...]}
+    if not base or 'library' not in base:
+        return []
 
-    # 2) Build a small override index (cheap) for quick has_override & lookups
-    idx  = build_override_index()
-    if not any(idx.get(k) for k in ('title_ids','basenames','by_title_id','by_appver','by_basename')):
-        return _apply_default_ui_flags(base['library'])
-
-    out = []
-
-    # 3) Overlay + flags
-    for src in base['library']:
-        out.append(_compute_ui_flags_and_overrides(src, idx))
-
-    # 4) Return the merged list
-    return out
+    # Ensure UI flags exist
+    return _apply_ident_flags(base['library'])
 
 def load_base_library():
     """
@@ -655,7 +651,6 @@ def _add_files_without_apps(games_info):
             # What the UI needs
             'file_basename': fname,
             'filename': fname,
-            'file_basename_hint': fname,
 
             # Artwork
             'bannerUrl': 'https://placehold.co/400x225/png?text=Image+Unavailable',
@@ -763,8 +758,6 @@ def generate_base_library():
                 title.get('app_id'),
                 title.get('app_version')
             )
-            # Also add a hint key used by your downstream fallback in _compute_ui_flags_and_overrides
-            title['file_basename_hint'] = title['file_basename']
             games_info.append(title)
         
         _add_files_without_apps(games_info)
@@ -787,78 +780,28 @@ def generate_base_library():
     finally:
         titles_lib.unload_titledb()
 
-def _compute_ui_flags_and_overrides(src: dict, idx: dict) -> dict:
+def _apply_ident_flags(library_list: list[dict]) -> list[dict]:
     """
-    Apply overrides (from prebuilt idx) and compute UI flags for a single item.
-    - Unrecognized status is determined from the BASE item (src) and preserved.
-    - No DB calls; shallow copy only.
+    Apply UI flags derived purely from the BASE library (no overrides).
+    Computes `identified`, `identification_type`, and `is_unrecognized` if missing.
+    Does not mutate the input list.
     """
-    dst = src.copy()
+    out = []
+    for src in library_list:
+        dst = src.copy()
 
-    # ---------- determine unrecognized from BASE (pre-override) ----------
-    base_identified = src.get("identified")
-    base_ident_type = (src.get("identification_type") or "").lower()
-    base_name = (src.get("title_id_name") or "").strip().lower()
-
-    base_unrecognized = (
-        (base_identified is False) or
-        (base_ident_type in ("not_in_titledb", "exception", "unidentified")) or
-        (base_name == "unrecognized")
-    )
-    # --------------------------------------------------------------------
-
-    # Fast-access structures
-    title_ids = idx.get("title_ids", set())
-    basenames = idx.get("basenames", set())
-    by_title = idx.get("by_title_id", {})
-    by_appver = idx.get("by_appver", {})
-    by_base = idx.get("by_basename", {})
-
-    # Quick keys
-    tid = dst.get("title_id") or dst.get("id")
-    appver = (dst.get("app_id"), str(dst.get("app_version", "0")))
-    fb = dst.get("file_basename") or dst.get("filename") or dst.get("file_basename_hint")
-
-    # Cheap prefilter: O(1) checks
-    has = ((tid in title_ids) if tid else False) or ((fb in basenames) if fb else False) or (appver in by_appver)
-
-    if has:
-        # Pick most specific override available and merge select fields
-        ov = by_appver.get(appver) or (by_title.get(tid) if tid else None) or (by_base.get(fb) if fb else None)
-        if ov:
-            name = ov.get("name")
-            if name:
-                dst["title_id_name"] = name
-
-            icon_path = ov.get("icon_path")
-            if icon_path:
-                dst["iconUrl"] = f"/static/{icon_path.lstrip('/')}"
-
-            banner_path = ov.get("banner_path")
-            if banner_path:
-                dst["bannerUrl"] = f"/static/{banner_path.lstrip('/')}"
-
-        dst["has_override"] = True
-    else:
-        dst["has_override"] = False
-
-    # ---------- UI flags ----------
-    if base_unrecognized:
-        # Preserve "unrecognized" even if override changed the display name/art
-        dst["identified"] = False
-        # Keep existing identification_type if it was already a meaningful unrecognized type; else set a default
-        ident_type = (dst.get("identification_type") or "").lower()
-        if ident_type not in ("not_in_titledb", "exception", "unidentified"):
-            ident_type = "not_in_titledb"
-        dst["identification_type"] = ident_type
-        dst["is_unrecognized"] = True
-    else:
-        # Normal path (recognized titles)
         identified = dst.get("identified")
         ident_type = (dst.get("identification_type") or "").lower()
+        name_lower = (dst.get("title_id_name") or "").strip().lower()
 
+        # If `identified` wasn't provided, infer it from ident_type/name
         if identified is None:
-            identified = True  # base item was recognized; default to True if missing
+            if ident_type in ("not_in_titledb", "exception", "unidentified"):
+                identified = False
+            else:
+                identified = name_lower != "unrecognized"
+
+        # If `identification_type` wasn't provided, pick a sensible default
         if not ident_type:
             ident_type = "cnmt" if identified else "unidentified"
 
@@ -868,34 +811,5 @@ def _compute_ui_flags_and_overrides(src: dict, idx: dict) -> dict:
             (not dst["identified"]) or ident_type in ("not_in_titledb", "exception", "unidentified")
         )
 
-    return dst
-
-def _apply_default_ui_flags(library_list: list[dict]) -> list[dict]:
-    """
-    Apply default UI flags to items that have no overrides.
-    Adds has_override=False and computes identification flags if missing.
-    Does not mutate the input list.
-    """
-    out = []
-    for src in library_list:
-        dst = src.copy()
-        dst.setdefault("has_override", False)
-
-        identified = dst.get("identified")
-        ident_type = (dst.get("identification_type") or "").lower()
-
-        if identified is None:
-            identified = (dst.get("title_id_name") or "").strip().lower() != "unrecognized"
-            if not identified and not ident_type:
-                ident_type = "not_in_titledb"
-
-        if not ident_type:
-            ident_type = "cnmt" if identified else "unidentified"
-
-        dst["identified"] = bool(identified)
-        dst["identification_type"] = ident_type
-        dst["is_unrecognized"] = (
-            not dst["identified"] or ident_type in ("not_in_titledb", "exception", "unidentified")
-        )
         out.append(dst)
     return out

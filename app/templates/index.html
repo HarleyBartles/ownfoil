@@ -231,7 +231,7 @@
     }
 
     // Apply (or remove) a single override onto matching games in memory.
-    // - Only overlays display fields (e.g., name/title_id_name) and has_override.
+    // - Only overlays display fields (e.g., name/title_id_name)
     // - Preserves is_unrecognized flag as-is.
     function applyOverrideToGamesByKey(key) {
         if (!key) return;
@@ -288,7 +288,11 @@
         }
     }
 
-    const hasActiveOverride = (game) => !!(game && game.has_override);
+    function hasActiveOverride(game) {
+        const k = keyForGame(game);
+        const o = k ? overridesByKey.get(k) : null;
+        return !!(o && o.enabled !== false);
+    }
 
     const isUnrecognizedGame = (game) => !!(game && game.is_unrecognized);
 
@@ -488,7 +492,7 @@
         });
 
         // Adjust icon sizes based on the slider value
-        adjustIconSizes(cardSize);
+        adjustIconSizes();
         // Update pagination
         updatePaginationControls(baseGames.length);
     }
@@ -679,9 +683,9 @@
             cardSize = parseInt($(this).val());
             localStorage.setItem('cardSize', cardSize);
             if (currentView === 'icon') {
-                adjustIconSizes(cardSize);
+                adjustIconSizes();
             } else {
-                adjustCardSizes(cardSize);
+                adjustCardSizes();
             }
         });
 
@@ -890,16 +894,10 @@
 
     // After a successful save/delete, update in-memory map and affected game objects, then re-render.
     function finishOverrideMutationAndRefresh(modifiedKey) {
-        // Update local has_override to match current map presence
-        const has = !!(modifiedKey && overridesByKey.has(modifiedKey));
-        games
-            .filter(g => keyForGame(g) === modifiedKey)
-            .forEach(g => { g.has_override = has; });
-
-        // Apply name overlay (doesn't touch has_override)
+        // Apply name overlay (doesn't touch any backend fields)
         applyOverrideToGamesByKey(modifiedKey);
 
-        // Re-apply filters and render
+        // Re-apply filters and render (star + filters derive from overridesByKey)
         applyFilters();
 
         overrideModal().hide();
