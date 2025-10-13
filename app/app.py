@@ -18,7 +18,7 @@ from auth import *
 import titles
 from utils import *
 from library import *
-from overrides_api import overrides_api
+from overrides import overrides_api
 import titledb
 import os
 import re
@@ -109,6 +109,7 @@ def init():
 
 os.makedirs(CONFIG_DIR, exist_ok=True)
 os.makedirs(DATA_DIR, exist_ok=True)
+os.makedirs(BANNERS_UPLOAD_DIR, exist_ok=True)
 
 ## Global variables
 app_settings = {}
@@ -190,6 +191,9 @@ def create_app():
     # TODO: generate random secret_key
     app.config['SECRET_KEY'] = '8accb915665f11dfa15c2db1a4e8026905f57716'
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+    app.config.setdefault("BANNERS_UPLOAD_DIR", BANNERS_UPLOAD_DIR)
+    app.config.setdefault("BANNERS_UPLOAD_URL_PREFIX", BANNERS_UPLOAD_URL_PREFIX)
 
     db.init_app(app)
     migrate.init_app(app, db)
@@ -431,6 +435,9 @@ def upload_file():
     } 
     return jsonify(resp)
 
+@app.route("/uploads/banners/<path:filename>")
+def uploaded_banners(filename):
+    return send_from_directory(app.config["BANNERS_UPLOAD_DIR"], filename, conditional=True)
 
 @app.route('/api/titles', methods=['GET'])
 @access_required('shop')

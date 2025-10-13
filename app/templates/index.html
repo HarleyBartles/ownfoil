@@ -179,9 +179,26 @@
           <label class="form-label">Version</label>
           <input id="ovr-version" type="number" class="form-control" placeholder="e.g. 10000">
         </div>
+
+        <!-- Banner upload -->
+        <div class="mb-2">
+          <label class="form-label">Banner image</label>
+          <input id="ovr-banner-file" type="file" class="form-control" accept=".jpg,.jpeg,.png,.webp">
+          <div class="form-text">Supported: JPG, PNG, WEBP. Replaces any existing banner for this title.</div>
+        </div>
+
+        <!-- Banner preview -->
+        <div id="ovr-banner-preview" class="mb-2" style="display:none;">
+          <label class="form-label d-block">Preview</label>
+          <img id="ovr-banner-preview-img" src="" alt="Banner preview" class="img-fluid rounded border">
+        </div>
+
       </div>
       <div class="modal-footer justify-content-between">
-        <button id="btn-reset-override" type="button" class="btn btn-danger" style="display:none;">Reset override</button>
+        <div class="d-flex gap-2">
+          <button id="btn-reset-override" type="button" class="btn btn-danger" style="display:none;">Reset override</button>
+          <button id="btn-remove-banner" type="button" class="btn btn-outline-danger" style="display:none;">Remove banner</button>
+        </div>
         <div>
           <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
           <button id="btn-save-override" type="button" class="btn btn-primary">Save</button>
@@ -212,6 +229,10 @@
     let totalGames = 0;
     let cardSize = 3; // Default card size
     let currentView = 'card'; // Default view is 'card'
+    // --- Banner editor state (per modal open) ---
+    let bannerFileToUpload = null;     // File object or null
+    let bannerRemoveRequested = false; // bool
+
 
     // --- Overrides state ---
     // key: title_id or "file:<file_basename>"  -> override object
@@ -289,12 +310,75 @@
     }
 
     function hasActiveOverride(game) {
-        const k = keyForGame(game);
-        const o = k ? overridesByKey.get(k) : null;
+        const o = getOverrideForGame(game);
         return !!(o && o.enabled !== false);
     }
 
     const isUnrecognizedGame = (game) => !!(game && game.is_unrecognized);
+
+    function getOverrideForGame(game){
+        const k = keyForGame(game);
+        return k ? overridesByKey.get(k) : null;
+    }
+
+    function bannerUrlFor(game){
+        const ovr = getOverrideForGame(game);
+        // Priority: override.banner_path/bannerUrl -> game.banner_path/bannerUrl -> fallback to iconUrl
+        return (
+            ovr?.banner_path || ovr?.bannerUrl ||
+            game.banner_path || game.bannerUrl ||
+            game.banner || game.iconUrl || ''
+        );
+    }
+
+    // Crop a chosen file to 400x225 (center-cover) and return a PNG data URL via callback
+    function cropBannerFileToDataURL(file, callback) {
+        const TARGET_W = 400, TARGET_H = 225;
+        const img = new Image();
+        const url = URL.createObjectURL(file);
+
+        img.onload = () => {
+            try {
+                const canvas = document.createElement('canvas');
+                canvas.width = TARGET_W;
+                canvas.height = TARGET_H;
+                const ctx = canvas.getContext('2d');
+
+                const srcW = img.naturalWidth || img.width;
+                const srcH = img.naturalHeight || img.height;
+                if (!srcW || !srcH) {
+                    URL.revokeObjectURL(url);
+                    return callback(null);
+                }
+
+                // Cover-scale first
+                const scale = Math.max(TARGET_W / srcW, TARGET_H / srcH);
+                const drawW = Math.round(srcW * scale);
+                const drawH = Math.round(srcH * scale);
+                const dx = Math.round((TARGET_W - drawW) / 2);
+                const dy = Math.round((TARGET_H - drawH) / 2);
+
+                ctx.imageSmoothingEnabled = true;
+                ctx.imageSmoothingQuality = 'high';
+                ctx.clearRect(0, 0, TARGET_W, TARGET_H);
+                ctx.drawImage(img, dx, dy, drawW, drawH);
+
+                const dataURL = canvas.toDataURL('image/png');
+                URL.revokeObjectURL(url);
+                callback(dataURL);
+            } catch (e) {
+                URL.revokeObjectURL(url);
+                callback(null);
+            }
+        };
+
+        img.onerror = () => {
+            URL.revokeObjectURL(url);
+            callback(null);
+        };
+
+        img.src = url;
+    }
 
     function fetchGames() {
         return new Promise((resolve) => {
@@ -371,7 +455,7 @@
                 .attr('data-identified', game.identified ? 'true' : 'false')
                 .attr('data-identification-type', (game.identification_type || '').toLowerCase());
 
-            const img = $('<img class="card-img"></img>').attr('src', game.bannerUrl);
+            const img = $('<img class="card-img"></img>').attr('src', bannerUrlFor(game));
             card.append(img);
 
             // --- Override star indicator (not clickable) ---
@@ -723,6 +807,42 @@
         $(document).on('click', '.popover', function (e) {
             e.stopPropagation(); // Prevent the click event from bubbling up
         });
+
+                // When a new banner file is chosen, generate a 400x225 center-cover preview (PNG)
+        $('#ovr-banner-file').on('change', function(){
+            const f = this.files && this.files[0];
+            bannerFileToUpload = f || null;
+            bannerRemoveRequested = false;
+
+            if (!bannerFileToUpload) return;
+
+            cropBannerFileToDataURL(bannerFileToUpload, function(dataURL){
+                if (dataURL) {
+                    $('#ovr-banner-preview-img').attr('src', dataURL);
+                    $('#ovr-banner-preview').show();
+                    $('#btn-remove-banner').show();
+                } else {
+                    // Fallback: show the raw file if cropping fails (unlikely)
+                    const fr = new FileReader();
+                    fr.onload = e => {
+                        $('#ovr-banner-preview-img').attr('src', e.target.result);
+                        $('#ovr-banner-preview').show();
+                        $('#btn-remove-banner').show();
+                    };
+                    fr.readAsDataURL(bannerFileToUpload);
+                }
+            });
+        });
+
+        // Mark banner for removal (does not delete yet; done on Save)
+        $('#btn-remove-banner').on('click', function(){
+            if (!confirm('Remove the banner image for this title?')) return;
+            bannerFileToUpload = null;
+            bannerRemoveRequested = true;
+            $('#ovr-banner-file').val('');
+            $('#ovr-banner-preview').hide();
+            $('#ovr-banner-preview-img').attr('src','');
+        });
     
     });
 
@@ -885,8 +1005,24 @@
 
         $('#btn-reset-override').toggle(!!ovr?.id);
 
+        // reset banner state
+        bannerFileToUpload = null;
+        bannerRemoveRequested = false;
+        $('#ovr-banner-file').val(''); // clear file input
+
+        const currentBanner = ovr?.banner_path || ovr?.bannerUrl || game.banner_path || game.bannerUrl || '';
+        if (currentBanner) {
+            $('#ovr-banner-preview-img').attr('src', currentBanner);
+            $('#ovr-banner-preview').show();
+            $('#btn-remove-banner').show();
+        } else {
+            $('#ovr-banner-preview').hide();
+            $('#btn-remove-banner').hide();
+        }
+
         overrideModal().show();
     }
+
 
     // Utility: normalize string to null if blank
     function nv(v){ const s = (v ?? '').toString().trim(); return s.length ? s : null; }
@@ -903,12 +1039,15 @@
         overrideModal().hide();
     }
 
-    async function saveOverride() {
+        async function saveOverride() {
         const id = $('#ovr-id').val().trim();
         const title_id = $('#ovr-title-id').val().trim();
         const file_basename = $('#ovr-file-basename').val().trim();
 
-        const body = {
+        const key = title_id ? title_id : (file_basename ? ('file:' + file_basename) : '');
+
+        // Build payload fields
+        const payload = {
             name: nv($('#ovr-name').val()),
             publisher: nv($('#ovr-publisher').val()),
             region: nv($('#ovr-region').val()),
@@ -916,37 +1055,62 @@
             version: numOrNull($('#ovr-version').val()),
             enabled: true
         };
-        if (title_id) body.title_id = title_id;
-        else if (file_basename) body.file_basename = file_basename;
+        if (title_id) payload.title_id = title_id;
+        else if (file_basename) payload.file_basename = file_basename;
 
-        const key = title_id ? title_id : (file_basename ? ('file:' + file_basename) : '');
+        const needMultipart = !!(bannerFileToUpload || bannerRemoveRequested);
+
+        let url, method, options;
+        if (id) {
+            url = `/api/overrides/${id}`;
+            method = 'PUT';
+        } else {
+            url = '/api/overrides';
+            method = 'POST';
+        }
+
+        if (needMultipart) {
+            // multipart/form-data
+            const fd = new FormData();
+            Object.entries(payload).forEach(([k, v]) => {
+                if (v !== undefined && v !== null) fd.append(k, String(v));
+            });
+            if (bannerFileToUpload) {
+                fd.append('banner_file', bannerFileToUpload);
+            }
+            if (bannerRemoveRequested) {
+                fd.append('banner_remove', 'true');
+            }
+
+            options = { method, body: fd };
+        } else {
+            // application/json
+            options = {
+                method,
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            };
+        }
 
         let res;
         try {
-            if (id) {
-                res = await fetch(`/api/overrides/${id}`, {
-                    method: 'PUT',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify(body)
-                });
-            } else {
-                res = await fetch('/api/overrides', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify(body)
-                });
-            }
+            res = await fetch(url, options);
         } catch (e) {
             alert('Failed to save override');
             return;
         }
 
         if (!res.ok) {
-            alert('Failed to save override');
+            const err = await res.json().catch(() => ({}));
+            alert(err?.error || 'Failed to save override');
             return;
         }
 
-        // Try to get the saved override from response; if not present, fall back to a fresh fetch
+        // Clear transient banner state after a successful save
+        bannerFileToUpload = null;
+        bannerRemoveRequested = false;
+        $('#ovr-banner-file').val('');
+
         let saved = null;
         try { saved = await res.json(); } catch { /* some APIs return no body */ }
 
@@ -959,7 +1123,7 @@
             }
         }
 
-        // Fallback: refetch the whole overrides list, then refresh
+        // Fallback: refetch and refresh
         await fetchOverrides();
         finishOverrideMutationAndRefresh(key);
     }
