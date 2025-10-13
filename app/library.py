@@ -90,8 +90,10 @@ def init_libraries(app, watcher, paths):
 def add_files_to_library(library, files):
     """
     Upsert files into the Files table.
-    - Always inserts a row even when file_info is None (marks as unidentified).
+    - Always inserts a row even when file_info is None.
+    - Marks unidentified files via identification_type="filename".
     - Updates existing rows in place.
+    - Commits in batches of 100.
     """
     nb_to_identify = len(files)
 
@@ -108,15 +110,15 @@ def add_files_to_library(library, files):
         file_rel = filepath.replace(library_path, "")
         logger.info(f'Getting file info ({n+1}/{nb_to_identify}): {file_rel}')
 
-        # Try to read basic FS info regardless of titles_lib outcome
+        # Basic FS info
         filename = os.path.basename(filepath)
-        extension = os.path.splitext(filename)[1].lstrip(".").lower()
+        extension = os.path.splitext(filename)[1].lstrip('.').lower()
         try:
             size = os.path.getsize(filepath)
         except Exception:
             size = None
 
-        # Call the metadata helper
+        # Best-effort metadata probe (non-final)
         try:
             file_info = titles_lib.get_file_info(filepath)
         except Exception as e:
@@ -126,27 +128,27 @@ def add_files_to_library(library, files):
         # Upsert by unique filepath
         existing = Files.query.filter_by(filepath=filepath).first()
         if existing:
-            # Refresh core info
-            existing.folder = os.path.dirname(filepath) if file_info is None else file_info.get("filedir", os.path.dirname(filepath))
-            existing.filename = filename if file_info is None else file_info.get("filename", filename)
-            existing.extension = extension if file_info is None else file_info.get("extension", extension)
-            # Size: prefer file_info size if provided, else FS size
+            # Refresh core info (prefer parsed values when present)
+            existing.folder = (file_info.get("filedir") if file_info else os.path.dirname(filepath))
+            existing.filename = (file_info.get("filename") if file_info else filename)
+            existing.extension = (file_info.get("extension") if file_info else extension)
             existing.size = (file_info.get("size") if (file_info and "size" in file_info) else size)
 
-            # Identification flags
+            # STAGE for deep identification (don't finalize here)
             if file_info is None:
                 existing.identified = False
                 existing.identification_type = "unidentified"
                 existing.identification_error = "Failed to parse file info"
             else:
-                existing.identified = True
-                existing.identification_type = "titles_lib"
+                existing.identified = False
+                existing.identification_type = "filename"
                 existing.identification_error = None
 
             existing.identification_attempts = (existing.identification_attempts or 0) + 1
             existing.last_attempt = datetime.datetime.utcnow()
 
         else:
+            # Insert new staged row
             if file_info is None:
                 new_file = Files(
                     filepath=filepath,
@@ -169,8 +171,8 @@ def add_files_to_library(library, files):
                     filename=file_info.get("filename", filename),
                     extension=file_info.get("extension", extension),
                     size=file_info.get("size", size),
-                    identified=True,
-                    identification_type="titles_lib",
+                    identified=False,                 # <- STAGED, not final
+                    identification_type="filename",   # <- STAGED marker
                     identification_error=None,
                     identification_attempts=1,
                     last_attempt=datetime.datetime.utcnow(),
@@ -200,23 +202,22 @@ def scan_library_path(library_path):
 def get_files_to_identify(library_id, *, force_all: bool = False):
     q = Files.query.filter(Files.library_id == library_id)
 
-    stale_cutoff = datetime.datetime.utcnow() - datetime.timedelta(days=7)
+    if force_all:
+        return q.order_by(Files.last_attempt.asc().nullsfirst()).all()
 
-    if not force_all:
-        q = q.filter(
-            or_(
-                Files.identified.is_(None),
-                Files.identification_type.is_(None),
-                Files.last_attempt.is_(None),
-                # rescan stale entries older than 7 days
-                Files.last_attempt < stale_cutoff,
-            )
+    staged = ("filename", "titles_lib") # staged markers
+    seven_days_ago = datetime.datetime.utcnow() - datetime.timedelta(days=7)
+
+    q = q.filter(
+        or_(
+            Files.identified.is_(False), # not yet identified
+            Files.identification_type.in_(staged), # staged by first pass
+            Files.last_attempt.is_(None), # never attempted
+            Files.last_attempt < seven_days_ago, # stale
         )
+    )
 
-    return q.order_by(
-        Files.last_attempt.is_(None).desc(),
-        Files.last_attempt.asc()
-    ).all()
+    return q.order_by(Files.last_attempt.asc().nullsfirst()).all()
 
 def identify_library_files(library):
     # Resolve library_id / path
