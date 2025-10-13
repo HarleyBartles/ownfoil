@@ -110,6 +110,7 @@ def init():
 os.makedirs(CONFIG_DIR, exist_ok=True)
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(BANNERS_UPLOAD_DIR, exist_ok=True)
+os.makedirs(ICONS_UPLOAD_DIR, exist_ok=True)
 
 ## Global variables
 app_settings = {}
@@ -194,6 +195,8 @@ def create_app():
 
     app.config.setdefault("BANNERS_UPLOAD_DIR", BANNERS_UPLOAD_DIR)
     app.config.setdefault("BANNERS_UPLOAD_URL_PREFIX", BANNERS_UPLOAD_URL_PREFIX)
+    app.config.setdefault("ICONS_UPLOAD_DIR", ICONS_UPLOAD_DIR)
+    app.config.setdefault("ICONS_UPLOAD_URL_PREFIX", ICONS_UPLOAD_URL_PREFIX)
 
     db.init_app(app)
     migrate.init_app(app, db)
@@ -438,6 +441,10 @@ def upload_file():
 @app.route("/uploads/banners/<path:filename>")
 def uploaded_banners(filename):
     return send_from_directory(app.config["BANNERS_UPLOAD_DIR"], filename, conditional=True)
+
+@app.route("/uploads/icons/<path:filename>")
+def uploaded_icons(filename):
+    return send_from_directory(app.config["ICONS_UPLOAD_DIR"], filename, conditional=True)
 
 @app.route('/api/titles', methods=['GET'])
 @access_required('shop')

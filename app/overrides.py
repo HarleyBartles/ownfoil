@@ -3,10 +3,11 @@ import os
 from datetime import datetime
 from flask import Blueprint, request, jsonify, current_app
 from flask_login import login_required, current_user
+from io import BytesIO
 from PIL import Image, ImageOps
 from sqlalchemy import or_
 from typing import Optional, Dict, Any
-from werkzeug.exceptions import BadRequest, NotFound
+from werkzeug.exceptions import BadRequest, Forbidden, NotFound
 from werkzeug.utils import secure_filename
 
 from db import db, UserOverrides
@@ -90,8 +91,8 @@ def _apply_user_override(base: Dict[str, Any], uo) -> Dict[str, Any]:
 
     # overlay text fields
     for f in _OVERRIDABLE_FIELDS:
-        v = getattr(uo, f)
-        if v:  # only replace when override provides a value
+        v = getattr(uo, f, None)
+        if v is not None and v != "":
             merged[f] = v
 
     # artwork: use public paths as-is (e.g., /uploads/banners/...), only prefix /static for relative asset paths
@@ -135,47 +136,45 @@ def merge_with_override(
 
 def require_admin():
     if not getattr(current_user, "is_authenticated", False) or not current_user.is_admin:
-        raise BadRequest("Admin access required.")
+        raise Forbidden("Admin access required.")
 
-# Note: UI sends multipart only when a banner upload/removal is requested; otherwise JSON.
+# Note: UI sends multipart only when a banner or icon upload/removal is requested; otherwise JSON.
 # This keeps existing JSON flows working while enabling binary upload.
 def _parse_payload():
     """
     Accept either JSON (application/json) or multipart/form-data.
-    Returns (data_dict, banner_file, banner_remove_flag).
-    - data_dict: dict of fields for _apply_fields
-    - banner_file: FileStorage or None
-    - banner_remove_flag: bool
+    Returns (data_dict, banner_file, banner_remove_flag, icon_file, icon_remove_flag).
     """
     banner_file = None
     banner_remove = False
+    icon_file = None
+    icon_remove = False
 
     ctype = (request.content_type or "").lower()
 
     if ctype.startswith("multipart/form-data"):
-        # Read textual fields from form, file from files
         form = request.form or {}
         data = {k: form.get(k) for k in form.keys()}
 
-        # normalize booleans that might come from form
         for k in ("enabled", ):
             if k in data and isinstance(data[k], str):
                 data[k] = data[k].lower() in ("1", "true", "yes", "on")
 
-        # explicit removal flag
         banner_remove = (form.get("banner_remove", "").lower() in ("1", "true", "yes", "on"))
+        icon_remove   = (form.get("icon_remove", "").lower()   in ("1", "true", "yes", "on"))
 
         banner_file = request.files.get("banner_file") or request.files.get("file")
+        icon_file   = request.files.get("icon_file")
 
-        return data, banner_file, banner_remove
+        return data, banner_file, banner_remove, icon_file, icon_remove
 
-    # default: JSON
     data = request.get_json(silent=True)
     if data is None:
         raise BadRequest("Expected application/json or multipart/form-data body.")
-    # in JSON mode, allow banner_remove true|false
+
     banner_remove = bool(data.get("banner_remove")) if isinstance(data, dict) else False
-    return data, None, banner_remove
+    icon_remove   = bool(data.get("icon_remove"))   if isinstance(data, dict) else False
+    return data, None, banner_remove, None, icon_remove
 
 
 def _apply_fields(uo: UserOverrides, data: dict):
@@ -183,7 +182,7 @@ def _apply_fields(uo: UserOverrides, data: dict):
     fields = [
         "title_id", "file_basename", "app_id", "app_version",
         "name", "publisher", "region", "description", "content_type", "version",
-        "icon_path", "banner_path", "enabled",
+        "enabled",
     ]
     for f in fields:
         if f in data:
@@ -207,87 +206,98 @@ def _ext_for_content_type(content_type: str) -> str:
         return '.webp'
     return ''
 
-def _serialize_with_banner_url(uo: UserOverrides) -> dict:
+def _serialize_with_art_urls(uo: UserOverrides) -> dict:
     d = uo.as_dict()
+    # expose camelCase read-only fields the UI expects
     d["bannerUrl"] = d.get("banner_path")
+    d["iconUrl"]   = d.get("icon_path")
     return d
 
-# We always normalize to PNG on disk for consistency, regardless of input type.
-# Public path is /uploads/banners/<title_id>_banner.png served by uploaded_banners() in create_app().
-def _save_banner_file_for_title(title_id: str, file_storage) -> str:
-    """
-    Save the uploaded banner image for a title and return the public URL.
-    - Validates input type (jpg/jpeg/png/webp)
-    - Crops+resizes to 400x225 (center-cover)
-    - ALWAYS saves as PNG on disk: <title_id>_banner.png
-    - Overwrites/removes any prior banner regardless of previous extension
-    """
+def _validate_upload(file_storage) -> None:
     filename = secure_filename(file_storage.filename or "")
-    in_ext = os.path.splitext(filename)[1].lower()
-
-    # Validate input type (by extension or MIME fallback)
     if not _allowed_image(filename):
-        in_ext = _ext_for_content_type(getattr(file_storage, "mimetype", "") or "")
-        if not in_ext or in_ext not in ALLOWED_IMAGE_EXTS:
+        ext = _ext_for_content_type(getattr(file_storage, "mimetype", "") or "")
+        if not ext or ext not in ALLOWED_IMAGE_EXTS:
             raise BadRequest("Unsupported file type. Allowed: .jpg .jpeg .png .webp")
 
-    # Deterministic output name (always .png)
-    out_ext = ".png"
-    out_name = f"{title_id}_banner{out_ext}"
-    banners_dir = current_app.config["BANNERS_UPLOAD_DIR"]
-    os.makedirs(banners_dir, exist_ok=True)
-    dst_path = os.path.join(banners_dir, out_name)
-
-    # Remove any older banner with any allowed extension (including .png)
-    for old_ext in ALLOWED_IMAGE_EXTS.union({".png"}):
-        old_path = os.path.join(banners_dir, f"{title_id}_banner{old_ext}")
-        if old_path != dst_path and os.path.exists(old_path):
-            try:
-                os.remove(old_path)
-            except OSError:
-                pass
-
-    # Crop+resize to 400x225 (center-cover) using Pillow, then save as PNG
-    TARGET_W, TARGET_H = 400, 225
+def _read_upload_bytes(file_storage) -> bytes:
     try:
         file_storage.stream.seek(0)
     except Exception:
         pass
+    data = file_storage.read() if hasattr(file_storage, "read") else file_storage.stream.read()
+    try:
+        file_storage.stream.seek(0)
+    except Exception:
+        pass
+    return data
 
-    with Image.open(file_storage.stream) as im:
-        # Respect EXIF orientation
+def _save_banner_from_bytes(title_id: str, raw: bytes) -> str:
+    out_name = f"{title_id}_banner.png"
+    banners_dir = current_app.config["BANNERS_UPLOAD_DIR"]
+    os.makedirs(banners_dir, exist_ok=True)
+    dst_path = os.path.join(banners_dir, out_name)
+
+    # remove any older banner variants
+    for old_ext in ALLOWED_IMAGE_EXTS.union({".png"}):
+        old_path = os.path.join(banners_dir, f"{title_id}_banner{old_ext}")
+        if old_path != dst_path and os.path.exists(old_path):
+            try: os.remove(old_path)
+            except OSError: pass
+
+    TARGET_W, TARGET_H = 400, 225
+    with Image.open(BytesIO(raw)) as im:
         im = ImageOps.exif_transpose(im)
-
-        # --- COVER-SCALE FIRST, THEN CENTER-CROP ---
         src_w, src_h = im.size
         if src_w == 0 or src_h == 0:
             raise BadRequest("Invalid image.")
-
-        # Scale so the resized image fully covers the target box (no letterboxing)
         scale = max(TARGET_W / src_w, TARGET_H / src_h)
         new_w = int(round(src_w * scale))
         new_h = int(round(src_h * scale))
         if (new_w, new_h) != (src_w, src_h):
             im = im.resize((new_w, new_h), Image.Resampling.LANCZOS)
-
-        # Now center-crop to exactly 400x225
         left = max(0, (im.width  - TARGET_W) // 2)
         top  = max(0, (im.height - TARGET_H) // 2)
-        box = (left, top, left + TARGET_W, top + TARGET_H)
-        im = im.crop(box)
-
-        # Choose mode for PNG (keep alpha if present; otherwise RGB)
+        im = im.crop((left, top, left + TARGET_W, top + TARGET_H))
         if im.mode not in ("RGB", "RGBA"):
-            if "A" in im.getbands():
-                im = im.convert("RGBA")
-            else:
-                im = im.convert("RGB")
-
-        # Save as PNG (optimize)
+            im = im.convert("RGBA" if "A" in im.getbands() else "RGB")
         im.save(dst_path, format="PNG", optimize=True, compress_level=9)
 
-    public_url = f"{current_app.config['BANNERS_UPLOAD_URL_PREFIX'].rstrip('/')}/{out_name}"
-    return public_url
+    return f"{current_app.config['BANNERS_UPLOAD_URL_PREFIX'].rstrip('/')}/{out_name}"
+
+def _save_icon_from_bytes(title_id: str, raw: bytes) -> str:
+    out_name = f"{title_id}_icon.png"
+    icons_dir = current_app.config.get("ICONS_UPLOAD_DIR") or current_app.config["BANNERS_UPLOAD_DIR"]
+    os.makedirs(icons_dir, exist_ok=True)
+    dst_path = os.path.join(icons_dir, out_name)
+
+    # remove any older icon variants
+    for old_ext in ALLOWED_IMAGE_EXTS.union({".png"}):
+        old_path = os.path.join(icons_dir, f"{title_id}_icon{old_ext}")
+        if old_path != dst_path and os.path.exists(old_path):
+            try: os.remove(old_path)
+            except OSError: pass
+
+    TARGET = 400
+    with Image.open(BytesIO(raw)) as im:
+        im = ImageOps.exif_transpose(im)
+        src_w, src_h = im.size
+        if src_w == 0 or src_h == 0:
+            raise BadRequest("Invalid image.")
+        scale = max(TARGET / src_w, TARGET / src_h)
+        new_w = int(round(src_w * scale))
+        new_h = int(round(src_h * scale))
+        if (new_w, new_h) != (src_w, src_h):
+            im = im.resize((new_w, new_h), Image.Resampling.LANCZOS)
+        left = max(0, (im.width  - TARGET) // 2)
+        top  = max(0, (im.height - TARGET) // 2)
+        im = im.crop((left, top, left + TARGET, top + TARGET))
+        if im.mode not in ("RGB", "RGBA"):
+            im = im.convert("RGBA" if "A" in im.getbands() else "RGB")
+        im.save(dst_path, format="PNG", optimize=True, compress_level=9)
+
+    prefix = current_app.config.get("ICONS_UPLOAD_URL_PREFIX") or current_app.config["BANNERS_UPLOAD_URL_PREFIX"]
+    return f"{prefix.rstrip('/')}/{out_name}"
 
 def _delete_banner_file_if_owned(public_path: str) -> None:
     """
@@ -299,6 +309,25 @@ def _delete_banner_file_if_owned(public_path: str) -> None:
     if public_path.startswith(prefix):
         rel_name = public_path[len(prefix):]
         fpath = os.path.join(current_app.config['BANNERS_UPLOAD_DIR'], rel_name)
+        if os.path.exists(fpath):
+            try:
+                os.remove(fpath)
+            except OSError:
+                pass
+
+def _delete_icon_file_if_owned(public_path: str) -> None:
+    """
+    If public_path points inside our icons upload prefix, delete the file.
+    Falls back to banners prefix if ICONS_* not configured separately.
+    """
+    if not public_path:
+        return
+    prefix = (current_app.config.get('ICONS_UPLOAD_URL_PREFIX')
+              or current_app.config['BANNERS_UPLOAD_URL_PREFIX']).rstrip('/') + '/'
+    if public_path.startswith(prefix):
+        rel_name = public_path[len(prefix):]
+        fdir = current_app.config.get('ICONS_UPLOAD_DIR') or current_app.config['BANNERS_UPLOAD_DIR']
+        fpath = os.path.join(fdir, rel_name)
         if os.path.exists(fpath):
             try:
                 os.remove(fpath)
@@ -340,7 +369,7 @@ def list_overrides():
     )
 
     return jsonify({
-        "items": [_serialize_with_banner_url(r) for r in rows.items],
+        "items": [_serialize_with_art_urls(r) for r in rows.items],
         "page": rows.page,
         "pages": rows.pages,
         "total": rows.total,
@@ -354,14 +383,14 @@ def get_override(oid: int):
     uo = UserOverrides.query.get(oid)
     if not uo:
         raise NotFound("Override not found.")
-    return jsonify(_serialize_with_banner_url(uo))
+    return jsonify(_serialize_with_art_urls(uo))
 
 
 @overrides_api.post("")
 @login_required
 def create_override():
     require_admin()
-    data, banner_file, banner_remove = _parse_payload()
+    data, banner_file, banner_remove, icon_file, icon_remove = _parse_payload()
 
     # Defaults / normalization
     data = data or {}
@@ -376,12 +405,13 @@ def create_override():
         if k in data and isinstance(data[k], str) and not data[k].strip():
             data[k] = None
 
-    # Normalize app_version (int or None)
-    if "app_version" in data:
-        try:
-            data["app_version"] = int(data["app_version"]) if data["app_version"] not in (None, "") else None
-        except (TypeError, ValueError):
-            data["app_version"] = None
+    # Normalize app_version & version (int or None)
+    for key in ("app_version", "version"):
+        if key in data:
+            try:
+                data[key] = int(data[key]) if data[key] not in (None, "") else None
+            except (TypeError, ValueError):
+                data[key] = None
 
     # Require at least one targeting key after normalization
     if not any(data.get(k) for k in ("title_id", "file_basename", "app_id")):
@@ -391,16 +421,45 @@ def create_override():
     uo = UserOverrides()
     _apply_fields(uo, data)
 
-    # If a banner file is provided, save it now (prefer title_id if present)
-    title_id_for_banner = uo.title_id or data.get("title_id")
-    if banner_file and title_id_for_banner:
-        public_url = _save_banner_file_for_title(title_id_for_banner, banner_file)
-        uo.banner_path = public_url
-
-    # if requested to remove banner (even on create), ensure cleared
+    # Handle explicit removals first
     if banner_remove and uo.banner_path:
         _delete_banner_file_if_owned(uo.banner_path)
         uo.banner_path = None
+    if icon_remove and uo.icon_path:
+        _delete_icon_file_if_owned(uo.icon_path)
+        uo.icon_path = None
+
+    title_id_for_assets = uo.title_id or data.get("title_id")
+    
+    banner_raw = None
+    icon_raw = None
+
+    # Validate & read first (so we can reuse the original bytes)
+    if banner_file:
+        if not title_id_for_assets:
+            raise BadRequest("A title_id is required to save a banner image.")
+        _validate_upload(banner_file)
+        banner_raw = _read_upload_bytes(banner_file)
+
+    if icon_file:
+        if not title_id_for_assets:
+            raise BadRequest("A title_id is required to save an icon image.")
+        _validate_upload(icon_file)
+        icon_raw = _read_upload_bytes(icon_file)
+
+    # 1) Save the *uploaded* assets
+    if banner_raw:
+        uo.banner_path = _save_banner_from_bytes(title_id_for_assets, banner_raw)
+    if icon_raw:
+        uo.icon_path = _save_icon_from_bytes(title_id_for_assets, icon_raw)
+
+    # 2) Only if the counterpart is STILL missing (and not explicitly removed),
+    #    derive it from the same raw bytes we just read.
+    if banner_raw and not uo.icon_path and not icon_remove:
+        uo.icon_path = _save_icon_from_bytes(title_id_for_assets, banner_raw)
+
+    if icon_raw and not uo.banner_path and not banner_remove:
+        uo.banner_path = _save_banner_from_bytes(title_id_for_assets, icon_raw)
 
     # Timestamps
     uo.created_at = datetime.utcnow()
@@ -414,13 +473,13 @@ def create_override():
         db.session.rollback()
         raise BadRequest(f"Could not create override: {e}")
 
-    return jsonify(_serialize_with_banner_url(uo)), 201
+    return jsonify(_serialize_with_art_urls(uo)), 201
 
 @overrides_api.put("/<int:oid>")
 @login_required
 def update_override(oid: int):
     require_admin()
-    data, banner_file, banner_remove = _parse_payload()
+    data, banner_file, banner_remove, icon_file, icon_remove = _parse_payload()
     data = data or {}
 
     # Empty strings → None for text fields
@@ -433,11 +492,12 @@ def update_override(oid: int):
             data[k] = None
 
     # Normalize app_version (int or None)
-    if "app_version" in data:
-        try:
-            data["app_version"] = int(data["app_version"]) if data["app_version"] not in (None, "") else None
-        except (TypeError, ValueError):
-            data["app_version"] = None
+    for key in ("app_version", "version"):
+        if key in data:
+            try:
+                data[key] = int(data[key]) if data[key] not in (None, "") else None
+            except (TypeError, ValueError):
+                data[key] = None
 
     uo = UserOverrides.query.get(oid)
     if not uo:
@@ -446,18 +506,45 @@ def update_override(oid: int):
     # Apply updated fields (title_id may change)
     _apply_fields(uo, data)
 
-    # Handle banner remove first if requested
+    # Handle explicit removals first
     if banner_remove and uo.banner_path:
         _delete_banner_file_if_owned(uo.banner_path)
         uo.banner_path = None
+    if icon_remove and uo.icon_path:
+        _delete_icon_file_if_owned(uo.icon_path)
+        uo.icon_path = None
 
-    # If a new banner file is provided, save it against the (possibly updated) title_id
+    # New uploads (respect possibly updated title_id)
+    title_id_for_assets = uo.title_id or data.get("title_id")
+    
+    banner_raw = None
+    icon_raw = None
+
+    # Validate & read first
     if banner_file:
-        title_id_for_banner = uo.title_id or data.get("title_id")
-        if not title_id_for_banner:
+        if not title_id_for_assets:
             raise BadRequest("A title_id is required to save a banner image.")
-        public_url = _save_banner_file_for_title(title_id_for_banner, banner_file)
-        uo.banner_path = public_url
+        _validate_upload(banner_file)
+        banner_raw = _read_upload_bytes(banner_file)
+
+    if icon_file:
+        if not title_id_for_assets:
+            raise BadRequest("A title_id is required to save an icon image.")
+        _validate_upload(icon_file)
+        icon_raw = _read_upload_bytes(icon_file)
+
+    # 1) Save direct uploads
+    if banner_raw:
+        uo.banner_path = _save_banner_from_bytes(title_id_for_assets, banner_raw)
+    if icon_raw:
+        uo.icon_path = _save_icon_from_bytes(title_id_for_assets, icon_raw)
+
+    # 2) Only derive if counterpart is missing *after* direct saves and not removed
+    if banner_raw and not uo.icon_path and not icon_remove:
+        uo.icon_path = _save_icon_from_bytes(title_id_for_assets, banner_raw)
+
+    if icon_raw and not uo.banner_path and not banner_remove:
+        uo.banner_path = _save_banner_from_bytes(title_id_for_assets, icon_raw)
 
     uo.updated_at = datetime.utcnow()
 
@@ -467,7 +554,7 @@ def update_override(oid: int):
         db.session.rollback()
         raise BadRequest(f"Could not update override: {e}")
 
-    return jsonify(_serialize_with_banner_url(uo))
+    return jsonify(_serialize_with_art_urls(uo))
 
 @overrides_api.delete("/<int:oid>")
 @login_required
@@ -476,11 +563,16 @@ def delete_override(oid: int):
     uo = UserOverrides.query.get(oid)
     if not uo:
         raise NotFound("Override not found.")
-    
+
     if uo.banner_path:
         _delete_banner_file_if_owned(uo.banner_path)
+    if uo.icon_path:
+        _delete_icon_file_if_owned(uo.icon_path)
 
-    db.session.delete(uo)
-    db.session.commit()
+    try:
+        db.session.delete(uo)
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        raise BadRequest(f"Could not delete override: {e}")
     return jsonify({"ok": True, "deleted_id": oid})
-
