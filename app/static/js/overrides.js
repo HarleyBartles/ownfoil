@@ -1,7 +1,7 @@
 // Global helper for Overrides functionality.
 // Attaches as window.Overrides (no module build needed).
 
-(function () {
+(() => {
   const DEFAULT_BANNER = window.DEFAULT_BANNER || 'https://placehold.co/400x225/png?text=Image+Unavailable';
   const DEFAULT_ICON   = window.DEFAULT_ICON   || 'https://placehold.co/400x400/png?text=Image+Unavailable';
 
@@ -21,34 +21,20 @@
   const overrideModal = () => bootstrap.Modal.getOrCreateInstance('#overrideEditorModal');
 
   // ----------------- Helpers -----------------
-  function _trimmedOrNull(u) { return (typeof u === 'string' && u.trim().length) ? u.trim() : null; }
-  function trimOrNull(v) { return _trimmedOrNull((v ?? '').toString()); }
-  function numOrNull(v) {
-    const trimmed = _trimmedOrNull((v ?? '').toString());
-    if (trimmed === null) return null;
-    const n = Number(trimmed);
+  const _trimmedOrNull = (u) => (typeof u === 'string' && u.trim().length) ? u.trim() : null;
+  const trimOrNull = (v) => _trimmedOrNull((v ?? '').toString());
+  const numOrNull = (v) => {
+    const t = trimOrNull(v);
+    if (t === null) return null;
+    const n = Number(t);
     return Number.isFinite(n) ? n : null;
-  }
-  function addBuster(url) {
-    if (!url) return url;
-    // Skip data URLs and blob URLs
-    if (/^(data:|blob:)/i.test(url)) return url;
-    return `${url}${url.includes('?') ? '&' : '?'}b=${ARTWORK_BUSTER}`;
-  }
-
-  function keyForGame(game) {
-    if (game?.title_id) return game.title_id;
-    if (game?.file_basename) return 'file:' + game.file_basename;
-    return '';
-  }
-  function keyForOverride(ovr) {
-    if (ovr?.title_id) return ovr.title_id;
-    if (ovr?.file_basename) return 'file:' + ovr.file_basename;
-    return '';
-  }
+  };
+  const addBuster = (url) => !url || (/^(data:|blob:)/i.test(url)) ? url : `${url}${url.includes('?') ? '&' : '?'}b=${ARTWORK_BUSTER}`;
+  const keyForGame = (game) =>  game?.title_id || (game?.file_basename ? `file:${game?.file_basename}` : '');
+  const keyForOverride = (ovr) => ovr?.title_id ? ovr.title_id : (ovr?.file_basename ? `file:${ovr.file_basename}` : '');
 
   // Recognition flags (stable against overrides)
-  function computeRecognitionFlags(game) {
+  const computeRecognitionFlags = (game) => {
     const tidNameRaw = (game?._orig?.title_id_name ?? game.title_id_name ?? '').trim();
     const hasTitleDb =
       !!tidNameRaw &&
@@ -57,7 +43,7 @@
     return { isUnrecognized: !hasTitleDb, hasTitleDb };
   }
 
-  function isUnrecognizedGame(game) {
+  const isUnrecognizedGame = (game) => {
     if (!game) return false;
     if (typeof game.isUnrecognized === 'boolean') return game.isUnrecognized;
     const flags = computeRecognitionFlags(game);
@@ -68,7 +54,7 @@
 
   // ----------------- Overlay helpers -----------------
   // Apply (or remove) a single override onto matching games in memory.
-  function applyOverrideToGamesByKey(key, games) {
+  const applyOverrideToGamesByKey = (key, games) => {
     if (!key || !Array.isArray(games)) return;
     const ovr = overridesByKey.get(key) || null;
     const affecteds = games.filter(g => keyForGame(g) === key);
@@ -92,7 +78,7 @@
     });
   }
 
-  function reapplyAllOverridesToGames(games) {
+  const reapplyAllOverridesToGames = (games) => {
     if (!Array.isArray(games)) return;
     const keys = new Set();
     games.forEach(g => keys.add(keyForGame(g)));
@@ -100,7 +86,7 @@
   }
 
   // ----------------- Fetching -----------------
-  async function fetchOverrides() {
+  const fetchOverrides = async () => {
     try {
       const res = await fetch('/api/overrides', { cache: 'no-store' });
       if (!res.ok) {
@@ -121,7 +107,7 @@
   }
 
   // ----------------- Derived artwork URLs -----------------
-  function bannerUrlFor(game){
+  const bannerUrlFor = (game) => {
     const ovr = getOverrideForGame(game);
     const ovrUrl = _trimmedOrNull(ovr?.banner_path) || _trimmedOrNull(ovr?.bannerUrl);
     if (ovrUrl) return addBuster(ovrUrl);
@@ -132,7 +118,7 @@
     );
   }
 
-  function iconUrlFor(game){
+  const iconUrlFor = (game) =>{
     const ovr = getOverrideForGame(game);
     const ovrUrl = _trimmedOrNull(ovr?.icon_path) || _trimmedOrNull(ovr?.iconUrl);
     if (ovrUrl) return addBuster(ovrUrl);
@@ -144,18 +130,12 @@
     );
   }
 
-  function getOverrideForGame(game){
-    const k = keyForGame(game);
-    return k ? overridesByKey.get(k) : null;
-  }
+  const getOverrideForGame = (game) => { const k = keyForGame(game); return k ? overridesByKey.get(k) : null; }
 
-  function hasActiveOverride(game) {
-    const o = getOverrideForGame(game);
-    return !!(o && o.enabled !== false);
-  }
+  const hasActiveOverride = (game) => { const o = getOverrideForGame(game); return !!(o && o.enabled !== false); }
 
   // ----------------- Cropping helpers -----------------
-  function cropBannerFileToDataURL(file, callback) {
+  const cropBannerFileToDataURL = (file, callback) => {
     const TARGET_W = 400, TARGET_H = 225;
     const img = new Image();
     const url = URL.createObjectURL(file);
@@ -195,7 +175,7 @@
     img.src = url;
   }
 
-  function cropIconFileToDataURL(file, callback) {
+  const cropIconFileToDataURL = (file, callback) => {
     const TARGET = 400;
     const img = new Image();
     const url = URL.createObjectURL(file);
@@ -235,7 +215,7 @@
   }
 
   // ----------------- Modal open / Save / Reset -----------------
-  function openOverrideEditor(game) {
+  const openOverrideEditor = (game) => {
     const k = keyForGame(game);
     const ovr = k ? overridesByKey.get(k) : null;
 
@@ -271,67 +251,91 @@
     let currentIcon   = ovrIcon   ? addBuster(ovrIcon)   : (gameIcon   || null);
 
     if (!currentBanner && currentIcon) {
-      const img = new Image();
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        canvas.width = 400; canvas.height = 225;
-        const ctx = canvas.getContext('2d');
-        const scale = Math.max(400 / img.width, 225 / img.height);
-        const w = Math.round(img.width * scale);
-        const h = Math.round(img.height * scale);
-        const dx = Math.round((400 - w) / 2);
-        const dy = Math.round((225 - h) / 2);
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = 'high';
-        ctx.clearRect(0,0,400,225);
-        ctx.drawImage(img, dx, dy, w, h);
-        $('#ovr-banner-preview-img').attr('src', canvas.toDataURL('image/png'));
+        const img = new Image();
+        img.crossOrigin = 'anonymous'; // allow CORS-safe draw if server sends ACAO
+        img.onload = () => {
+            const canvas = document.createElement('canvas');
+            canvas.width = 400; canvas.height = 225;
+            const ctx = canvas.getContext('2d');
+            const scale = Math.max(400 / img.width, 225 / img.height);
+            const w = Math.round(img.width * scale);
+            const h = Math.round(img.height * scale);
+            const dx = Math.round((400 - w) / 2);
+            const dy = Math.round((225 - h) / 2);
+            ctx.imageSmoothingEnabled = true;
+            ctx.imageSmoothingQuality = 'high';
+            ctx.clearRect(0, 0, 400, 225);
+            ctx.drawImage(img, dx, dy, w, h);
+            try {
+                const dataURL = canvas.toDataURL('image/png');
+                $('#ovr-banner-preview-img').attr('src', dataURL);
+            } catch (_) {
+                // Canvas tainted (no CORS) — fall back to the original image URL or default
+                $('#ovr-banner-preview-img').attr('src', currentIcon || DEFAULT_BANNER);
+            }
+            $('#ovr-banner-preview-img').data('ovr', !!ovrBanner);
+            $('#ovr-banner-remove').toggle(!!ovrBanner);
+        };
+        img.onerror = () => {
+            $('#ovr-banner-preview-img').attr('src', DEFAULT_BANNER);
+            $('#ovr-banner-preview-img').data('ovr', !!ovrBanner);
+            $('#ovr-banner-remove').toggle(!!ovrBanner);
+        };
+        img.src = currentIcon;
+        } else {
+        $('#ovr-banner-preview-img').attr('src', currentBanner || DEFAULT_BANNER);
         $('#ovr-banner-preview-img').data('ovr', !!ovrBanner);
         $('#ovr-banner-remove').toggle(!!ovrBanner);
-      };
-      img.src = currentIcon;
-    } else {
-      $('#ovr-banner-preview-img').attr('src', currentBanner || DEFAULT_BANNER);
-      $('#ovr-banner-preview-img').data('ovr', !!ovrBanner);
-      $('#ovr-banner-remove').toggle(!!ovrBanner);
-    }
+        }
 
     if (!currentIcon && currentBanner) {
-      const img = new Image();
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        canvas.width = 400; canvas.height = 400;
-        const ctx = canvas.getContext('2d');
-        const scale = Math.max(400 / img.width, 400 / img.height);
-        const w = Math.round(img.width * scale);
-        const h = Math.round(img.height * scale);
-        const dx = Math.round((400 - w) / 2);
-        const dy = Math.round((400 - h) / 2);
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = 'high';
-        ctx.clearRect(0,0,400,400);
-        ctx.drawImage(img, dx, dy, w, h);
-        $('#ovr-icon-preview-img').attr('src', canvas.toDataURL('image/png'));
-        $('#ovr-icon-preview-img').data('ovr', !!ovrIcon);
-        $('#ovr-icon-remove').toggle(!!ovrIcon);
-      };
-      img.src = currentBanner;
-    } else {
-      $('#ovr-icon-preview-img').attr('src', currentIcon || DEFAULT_ICON);
-      $('#ovr-icon-preview-img').data('ovr', !!ovrIcon);
-      $('#ovr-icon-remove').toggle(!!ovrIcon);
-    }
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = () => {
+            const canvas = document.createElement('canvas');
+            canvas.width = 400; canvas.height = 400;
+            const ctx = canvas.getContext('2d');
+            const scale = Math.max(400 / img.width, 400 / img.height);
+            const w = Math.round(img.width * scale);
+            const h = Math.round(img.height * scale);
+            const dx = Math.round((400 - w) / 2);
+            const dy = Math.round((400 - h) / 2);
+            ctx.imageSmoothingEnabled = true;
+            ctx.imageSmoothingQuality = 'high';
+            ctx.clearRect(0, 0, 400, 400);
+            ctx.drawImage(img, dx, dy, w, h);
+
+            try {
+                const dataURL = canvas.toDataURL('image/png');
+                $('#ovr-icon-preview-img').attr('src', dataURL);
+            } catch (_) {
+                $('#ovr-icon-preview-img').attr('src', currentBanner || DEFAULT_ICON);
+            }
+            $('#ovr-icon-preview-img').data('ovr', !!ovrIcon);
+            $('#ovr-icon-remove').toggle(!!ovrIcon);
+        };
+        img.onerror = () => {
+            $('#ovr-icon-preview-img').attr('src', DEFAULT_ICON);
+            $('#ovr-icon-preview-img').data('ovr', !!ovrIcon);
+            $('#ovr-icon-remove').toggle(!!ovrIcon);
+        };
+        img.src = currentBanner;
+        } else {
+            $('#ovr-icon-preview-img').attr('src', currentIcon || DEFAULT_ICON);
+            $('#ovr-icon-preview-img').data('ovr', !!ovrIcon);
+            $('#ovr-icon-remove').toggle(!!ovrIcon);
+        }
 
     overrideModal().show();
   }
 
-  function finishOverrideMutationAndRefresh(modifiedKey) {
+  const finishOverrideMutationAndRefresh = (modifiedKey) => {
     if (env.getGames) applyOverrideToGamesByKey(modifiedKey, env.getGames());
     if (env.applyFilters) env.applyFilters();
     overrideModal().hide();
   }
 
-  async function saveOverride() {
+  const saveOverride = async () => {
     const id = $('#ovr-id').val().trim();
     const title_id = $('#ovr-title-id').val().trim();
     const file_basename = $('#ovr-file-basename').val().trim();
@@ -406,7 +410,7 @@
     finishOverrideMutationAndRefresh(key);
   }
 
-  async function resetOverride() {
+  const resetOverride = async () => {
     const id = $('#ovr-id').val().trim();
     if (!id) return;
     if (!confirm('Remove override and revert to default metadata?')) return;
@@ -433,109 +437,109 @@
   }
 
   // ----------------- DOM bindings for modal & DnD -----------------
-  function initDomBindings() {
+  const initDomBindings = () => {
     // Banner change
-    $('#ovr-banner-file').on('change', function(){
-      const f = this.files && this.files[0];
-      $(this).data('pending', f || null);
-      $('#ovr-banner-remove').data('remove', false);
+    $('#ovr-banner-file').off('change').on('change', function () {
+        const f = this.files && this.files[0];
+        $(this).data('pending', f || null);
+        $('#ovr-banner-remove').data('remove', false);
 
-      if (!f) {
-        const current = $('#ovr-banner-preview-img').data('ovr') ? $('#ovr-banner-preview-img').attr('src') : null;
-        $('#ovr-banner-preview-img').attr('src', current || DEFAULT_BANNER);
-        $('#ovr-banner-remove').toggle(!!$('#ovr-banner-preview-img').data('ovr'));
-        return;
-      }
+        if (!f) {
+            const current = $('#ovr-banner-preview-img').data('ovr') ? $('#ovr-banner-preview-img').attr('src') : null;
+            $('#ovr-banner-preview-img').attr('src', current || DEFAULT_BANNER);
+            $('#ovr-banner-remove').toggle(!!$('#ovr-banner-preview-img').data('ovr'));
+            return;
+        }
 
-      cropBannerFileToDataURL(f, function(dataURL){
-        if (!dataURL) {
-          const fr = new FileReader();
-          fr.onload = e => {
-            $('#ovr-banner-preview-img').attr('src', e.target.result);
+        cropBannerFileToDataURL(f, (dataURL) => {
+            if (!dataURL) {
+            const fr = new FileReader();
+            fr.onload = e => {
+                $('#ovr-banner-preview-img').attr('src', e.target.result);
+                $('#ovr-banner-remove').show();
+                $('#ovr-banner-preview-img').removeData('ovr');
+            };
+            fr.readAsDataURL(f);
+            } else {
+            $('#ovr-banner-preview-img').attr('src', dataURL);
             $('#ovr-banner-remove').show();
             $('#ovr-banner-preview-img').removeData('ovr');
-          };
-          fr.readAsDataURL(f);
-        } else {
-          $('#ovr-banner-preview-img').attr('src', dataURL);
-          $('#ovr-banner-remove').show();
-          $('#ovr-banner-preview-img').removeData('ovr');
-        }
+            }
 
-        if (!$('#ovr-icon-file').data('pending') && !$('#ovr-icon-preview-img').data('ovr')) {
-          cropIconFileToDataURL(f, function(iconURL){
-            $('#ovr-icon-preview-img').attr('src', iconURL || DEFAULT_ICON);
-            if (iconURL) { $('#ovr-icon-remove').show(); $('#ovr-icon-preview-img').removeData('ovr'); }
-          });
-        }
-      });
+            if (!$('#ovr-icon-file').data('pending') && !$('#ovr-icon-preview-img').data('ovr')) {
+            cropIconFileToDataURL(f, (iconURL) => {
+                $('#ovr-icon-preview-img').attr('src', iconURL || DEFAULT_ICON);
+                if (iconURL) { $('#ovr-icon-remove').show(); $('#ovr-icon-preview-img').removeData('ovr'); }
+            });
+            }
+        });
     });
 
     // Icon change
-    $('#ovr-icon-file').on('change', function(){
-      const f = this.files && this.files[0];
-      $(this).data('pending', f || null);
-      $('#ovr-icon-remove').data('remove', false);
+    $('#ovr-icon-file').off('change').on('change', function () {
+        const f = this.files && this.files[0];
+        $(this).data('pending', f || null);
+        $('#ovr-icon-remove').data('remove', false);
 
-      if (!f) {
-        const current = $('#ovr-icon-preview-img').data('ovr') ? $('#ovr-icon-preview-img').attr('src') : null;
-        $('#ovr-icon-preview-img').attr('src', current || DEFAULT_ICON);
-        $('#ovr-icon-remove').toggle(!!$('#ovr-icon-preview-img').data('ovr'));
-        return;
-      }
+        if (!f) {
+            const current = $('#ovr-icon-preview-img').data('ovr') ? $('#ovr-icon-preview-img').attr('src') : null;
+            $('#ovr-icon-preview-img').attr('src', current || DEFAULT_ICON);
+            $('#ovr-icon-remove').toggle(!!$('#ovr-icon-preview-img').data('ovr'));
+            return;
+        }
 
-      cropIconFileToDataURL(f, function(dataURL){
-        if (!dataURL) {
-          const fr = new FileReader();
-          fr.onload = e => {
-            $('#ovr-icon-preview-img').attr('src', e.target.result);
+        cropIconFileToDataURL(f, (dataURL) => {
+            if (!dataURL) {
+            const fr = new FileReader();
+            fr.onload = e => {
+                $('#ovr-icon-preview-img').attr('src', e.target.result);
+                $('#ovr-icon-remove').show();
+                $('#ovr-icon-preview-img').removeData('ovr');
+            };
+            fr.readAsDataURL(f);
+            } else {
+            $('#ovr-icon-preview-img').attr('src', dataURL);
             $('#ovr-icon-remove').show();
             $('#ovr-icon-preview-img').removeData('ovr');
-          };
-          fr.readAsDataURL(f);
-        } else {
-          $('#ovr-icon-preview-img').attr('src', dataURL);
-          $('#ovr-icon-remove').show();
-          $('#ovr-icon-preview-img').removeData('ovr');
-        }
+            }
 
-        if (!$('#ovr-banner-file').data('pending') && !$('#ovr-banner-preview-img').data('ovr')) {
-          cropBannerFileToDataURL(f, function(bannerURL){
-            $('#ovr-banner-preview-img').attr('src', bannerURL || DEFAULT_BANNER);
-            if (bannerURL) { $('#ovr-banner-remove').show(); $('#ovr-banner-preview-img').removeData('ovr'); }
-          });
-        }
-      });
+            if (!$('#ovr-banner-file').data('pending') && !$('#ovr-banner-preview-img').data('ovr')) {
+            cropBannerFileToDataURL(f, (bannerURL) => {
+                $('#ovr-banner-preview-img').attr('src', bannerURL || DEFAULT_BANNER);
+                if (bannerURL) { $('#ovr-banner-remove').show(); $('#ovr-banner-preview-img').removeData('ovr'); }
+            });
+            }
+        });
     });
 
     // Remove buttons
-    $('#ovr-banner-remove').on('click', function(){
-      $('#ovr-banner-file').data('pending', null).val('');
-      $(this).data('remove', true);
-      $('#ovr-banner-preview-img').removeData('ovr').attr('src', DEFAULT_BANNER);
-      $(this).hide();
+    $('#ovr-banner-remove').off('click').on('click', function () {
+        $('#ovr-banner-file').data('pending', null).val('');
+        $(this).data('remove', true);
+        $('#ovr-banner-preview-img').removeData('ovr').attr('src', DEFAULT_BANNER);
+        $(this).hide();
     });
 
-    $('#ovr-icon-remove').on('click', function(){
-      $('#ovr-icon-file').data('pending', null).val('');
-      $(this).data('remove', true);
-      $('#ovr-icon-preview-img').removeData('ovr').attr('src', DEFAULT_ICON);
-      $(this).hide();
+    $('#ovr-icon-remove').off('click').on('click', function () {
+        $('#ovr-icon-file').data('pending', null).val('');
+        $(this).data('remove', true);
+        $('#ovr-icon-preview-img').removeData('ovr').attr('src', DEFAULT_ICON);
+        $(this).hide();
     });
 
     // Pencil/edit buttons
-    $('#ovr-banner-edit').on('click', () => $('#ovr-banner-file').trigger('click'));
-    $('#ovr-icon-edit').on('click',   () => $('#ovr-icon-file').trigger('click'));
+    $('#ovr-banner-edit').off('click').on('click', () => $('#ovr-banner-file').trigger('click'));
+$('#ovr-icon-edit').off('click').on('click',   () => $('#ovr-icon-file').trigger('click'));
 
     // Drag & drop zones
-    function wireDropZone($wrap, kind) {
+    const wireDropZone = ($wrap, kind) => {
       const over = () => $wrap.addClass('dragover');
       const out  = () => $wrap.removeClass('dragover');
 
-      $wrap.on('dragenter dragover', function(e){ e.preventDefault(); e.stopPropagation(); over(); });
-      $wrap.on('dragleave dragend drop', function(e){ e.preventDefault(); e.stopPropagation(); out(); });
+      $wrap.on('dragenter dragover', (e) => { e.preventDefault(); e.stopPropagation(); over(); });
+      $wrap.on('dragleave dragend drop', (e) => { e.preventDefault(); e.stopPropagation(); out(); });
 
-      $wrap.on('drop', function(e){
+      $wrap.on('drop', (e) => {
         const dt = e.originalEvent.dataTransfer;
         if (!dt || !dt.files || !dt.files.length) return;
 
@@ -547,13 +551,13 @@
           catch {
             $('#ovr-banner-file').data('pending', file);
             $('#ovr-banner-remove').data('remove', false);
-            cropBannerFileToDataURL(file, function(dataURL){
+            cropBannerFileToDataURL(file, (dataURL) => {
               if (dataURL) {
                 $('#ovr-banner-preview-img').attr('src', dataURL).removeData('ovr');
                 $('#ovr-banner-remove').show();
               }
               if (!$('#ovr-icon-preview-img').data('ovr')) {
-                cropIconFileToDataURL(file, function(iconURL){
+                cropIconFileToDataURL(file, (iconURL) => {
                   $('#ovr-icon-preview-img').attr('src', iconURL || DEFAULT_ICON);
                   if (iconURL) { $('#ovr-icon-remove').show(); $('#ovr-icon-preview-img').removeData('ovr'); }
                 });
@@ -565,13 +569,13 @@
           catch {
             $('#ovr-icon-file').data('pending', file);
             $('#ovr-icon-remove').data('remove', false);
-            cropIconFileToDataURL(file, function(dataURL){
+            cropIconFileToDataURL(file, (dataURL) => {
               if (dataURL) {
                 $('#ovr-icon-preview-img').attr('src', dataURL).removeData('ovr');
                 $('#ovr-icon-remove').show();
               }
               if (!$('#ovr-banner-preview-img').data('ovr')) {
-                cropBannerFileToDataURL(file, function(bannerURL){
+                cropBannerFileToDataURL(file, (bannerURL) => {
                   $('#ovr-banner-preview-img').attr('src', bannerURL || DEFAULT_BANNER);
                   if (bannerURL) { $('#ovr-banner-remove').show(); $('#ovr-banner-preview-img').removeData('ovr'); }
                 });
