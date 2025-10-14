@@ -1,6 +1,5 @@
 {% extends "base.html" %}
 
-
 {% block content %}
 <script>
   window.DEFAULT_BANNER = 'https://placehold.co/400x225/png?text=Image+Unavailable';
@@ -139,6 +138,7 @@
             <input type="range" class="form-range" min="1" max="5" step="1" id="cardSizeRange">
         </div>
     </div>
+
     <div class="grid-container" id="gridContainer">
         <div class="row g-4" id="gameGrid"></div>
         <!-- <div class="row row-cols-1 row-cols-md-3 g-4" id="gameGrid"></div> -->
@@ -195,32 +195,32 @@
             <div class="ovr-preview-grid">
                 <!-- Banner preview -->
                 <div class="ovr-preview-wrap" id="ovr-banner-preview" data-kind="banner">
-                <img id="ovr-banner-preview-img" src="" alt="Banner preview" class="ovr-preview-banner rounded border"
-                    onerror="if(this.src!==window.DEFAULT_BANNER)this.src=window.DEFAULT_BANNER;">
-                <!-- remove (top-left) -->
-                <button type="button" class="ovr-remove-x" id="ovr-banner-remove"
-                        title="Remove overridden banner" aria-label="Remove overridden banner">×</button>
-                <!-- edit (top-right) -->
-                <button type="button" class="ovr-edit-btn" id="ovr-banner-edit"
-                        title="Choose banner image" aria-label="Choose banner image">
-                    <i class="bi bi-pencil-square"></i>
-                </button>
-                <div class="ovr-caption">Banner (400×225)</div>
+                  <img id="ovr-banner-preview-img" src="" alt="Banner preview" class="ovr-preview-banner rounded border"
+                        onerror="if(this.src!==window.DEFAULT_BANNER)this.src=window.DEFAULT_BANNER;">
+                  <!-- remove (top-left) -->
+                  <button type="button" class="ovr-remove-x" id="ovr-banner-remove"
+                          title="Remove overridden banner" aria-label="Remove overridden banner">×</button>
+                  <!-- edit (top-right) -->
+                  <button type="button" class="ovr-edit-btn" id="ovr-banner-edit"
+                          title="Choose banner image" aria-label="Choose banner image">
+                      <i class="bi bi-pencil-square"></i>
+                  </button>
+                  <div class="ovr-caption">Banner (400×225)</div>
                 </div>
 
                 <!-- Icon preview -->
                 <div class="ovr-preview-wrap" id="ovr-icon-preview" data-kind="icon">
-                <img id="ovr-icon-preview-img" src="" alt="Icon preview" class="ovr-preview-icon rounded border"
-                    onerror="if(this.src!==window.DEFAULT_ICON)this.src=window.DEFAULT_ICON;">
-                <!-- remove (top-left) -->
-                <button type="button" class="ovr-remove-x" id="ovr-icon-remove"
-                        title="Remove overridden icon" aria-label="Remove overridden icon">×</button>
-                <!-- edit (top-right) -->
-                <button type="button" class="ovr-edit-btn" id="ovr-icon-edit"
-                        title="Choose icon image" aria-label="Choose icon image">
-                    <i class="bi bi-pencil-square"></i>
-                </button>
-                <div class="ovr-caption">Icon (400×400)</div>
+                  <img id="ovr-icon-preview-img" src="" alt="Icon preview" class="ovr-preview-icon rounded border"
+                        onerror="if(this.src!==window.DEFAULT_ICON)this.src=window.DEFAULT_ICON;">
+                  <!-- remove (top-left) -->
+                  <button type="button" class="ovr-remove-x" id="ovr-icon-remove"
+                          title="Remove overridden icon" aria-label="Remove overridden icon">×</button>
+                  <!-- edit (top-right) -->
+                  <button type="button" class="ovr-edit-btn" id="ovr-icon-edit"
+                          title="Choose icon image" aria-label="Choose icon image">
+                      <i class="bi bi-pencil-square"></i>
+                  </button>
+                  <div class="ovr-caption">Icon (400×400)</div>
                 </div>
             </div>
 
@@ -244,6 +244,9 @@
   </div>
 </div>
 
+<!-- Load overrides logic as a global helper first -->
+<script src="{{ url_for('static', filename='js/overrides.js') }}"></script>
+
 <script>
     let games = [];
     let filteredGames = [];
@@ -252,273 +255,23 @@
     let totalGames = 0;
     let cardSize = 3; // Default card size
     let currentView = 'card'; // Default view is 'card'
-    // --- Banner editor state (per modal open) ---
-    let bannerFileToUpload = null;     // File object or null
-    let bannerRemoveRequested = false; // bool
-    let iconFileToUpload   = null;     // File object or null
-    let iconRemoveRequested = false;   // bool
-
-    // Forces browsers to refetch updated artwork after saves/resets
-    let ARTWORK_BUSTER = Date.now();
-
-    // --- Overrides state ---
-    // key: title_id or "file:<file_basename>"  -> override object
-    const overridesByKey = new Map();
-    const overrideModal = () => bootstrap.Modal.getOrCreateInstance('#overrideEditorModal');
-
-    // --- Default artwork fallbacks ---
-    const DEFAULT_BANNER = window.DEFAULT_BANNER;
-    const DEFAULT_ICON   = window.DEFAULT_ICON;
-
-    function _trimmedOrNull(u) { return (typeof u === 'string' && u.trim().length) ? u.trim() : null; }
-
-    function addBuster(url){
-        if (!url) return url;
-        return `${url}${url.includes('?') ? '&' : '?'}b=${ARTWORK_BUSTER}`;
-    }
-
-    // --- Helpers to correlate overrides <-> games and mutate UI state ---
-    function keyForGame(game) {
-        if (game?.title_id) return game.title_id;
-        if (game?.file_basename) return 'file:' + game.file_basename;
-        return '';
-    }
-    function keyForOverride(ovr) {
-        if (ovr.title_id) return ovr.title_id;
-        if (ovr.file_basename) return 'file:' + ovr.file_basename;
-        return '';
-    }
-
-    // Apply (or remove) a single override onto matching games in memory.
-    // - Only overlays display fields (e.g., name/title_id_name)
-    // - Preserves is_unrecognized flag as-is.
-    function applyOverrideToGamesByKey(key) {
-        if (!key) return;
-        const ovr = overridesByKey.get(key) || null;
-        const affecteds = games.filter(g => keyForGame(g) === key);
-
-        affecteds.forEach(g => {
-            if (!g._orig) {
-                g._orig = {
-                    name: g.name,
-                    title_id_name: g.title_id_name
-                };
-            }
-
-            if (ovr && ovr.enabled !== false) {
-                if (ovr.name && typeof ovr.name === 'string' && ovr.name.trim().length) {
-                    g.title_id_name = ovr.name;
-                    g.name = ovr.name;
-                }
-            } else {
-                // revert just the display fields; leave has_override alone (API is source of truth)
-                if (g._orig) {
-                    g.title_id_name = g._orig.title_id_name;
-                    g.name = g._orig.name;
-                }
-            }
-        });
-    }
-
-    // Re-apply all overrides (fallback use, e.g., after bulk fetch)
-    function reapplyAllOverridesToGames() {
-        const keys = new Set();
-        games.forEach(g => keys.add(keyForGame(g)));
-        keys.forEach(k => applyOverrideToGamesByKey(k));
-    }
-
-    async function fetchOverrides() {
-        try {
-            const res = await fetch('/api/overrides', { cache: 'no-store' });
-            if (!res.ok) {
-                overridesByKey.clear();
-                return;
-            }
-            const list = await res.json();
-            overridesByKey.clear();
-            (Array.isArray(list.items) ? list.items : []).forEach(o => {
-                const k = keyForOverride(o);
-                if (k) overridesByKey.set(k, o);
-            });
-            // Overlay into current games after fetching
-            reapplyAllOverridesToGames();
-        } catch {
-            overridesByKey.clear();
-        }
-    }
-
-    function hasActiveOverride(game) {
-        const o = getOverrideForGame(game);
-        return !!(o && o.enabled !== false);
-    }
-
-    function computeRecognitionFlags(game) {
-        const tidNameRaw = (game?._orig?.title_id_name ?? game.title_id_name ?? '').trim();
-        const hasTitleDb =
-            !!tidNameRaw &&
-            tidNameRaw.toLowerCase() !== 'unrecognized' &&
-            tidNameRaw.toLowerCase() !== 'unidentified';
-        return { isUnrecognized: !hasTitleDb, hasTitleDb };
-    }
-
-    const isUnrecognizedGame = (game) => {
-        if (!game) return false;
-        if (typeof game.isUnrecognized === 'boolean') return game.isUnrecognized;
-        const flags = computeRecognitionFlags(game);
-        // cache on object for reuse
-        game.isUnrecognized = flags.isUnrecognized;
-        game.hasTitleDb = flags.hasTitleDb;
-        return game.isUnrecognized;
-    };
-
-    function getOverrideForGame(game){
-        const k = keyForGame(game);
-        return k ? overridesByKey.get(k) : null;
-    }
-
-    function bannerUrlFor(game){
-        const ovr = getOverrideForGame(game);
-        const ovrUrl = _trimmedOrNull(ovr?.banner_path) || _trimmedOrNull(ovr?.bannerUrl);
-        if (ovrUrl) return addBuster(ovrUrl);
-
-        return (
-            _trimmedOrNull(game.banner_path) || _trimmedOrNull(game.bannerUrl) || _trimmedOrNull(game.banner) ||
-            _trimmedOrNull(game.iconUrl) || DEFAULT_BANNER
-        );
-    }
-
-    function iconUrlFor(game){
-        const ovr = getOverrideForGame(game);
-        const ovrUrl = _trimmedOrNull(ovr?.icon_path) || _trimmedOrNull(ovr?.iconUrl);
-        if (ovrUrl) return addBuster(ovrUrl);
-
-        return (
-            _trimmedOrNull(game.iconUrl) || _trimmedOrNull(game.icon) ||
-            _trimmedOrNull(game.banner_path) || _trimmedOrNull(game.bannerUrl) || _trimmedOrNull(game.banner) ||
-            DEFAULT_ICON
-        );
-    }
-
-    // Crop a chosen file to 400x225 (center-cover) and return a PNG data URL via callback
-    function cropBannerFileToDataURL(file, callback) {
-        const TARGET_W = 400, TARGET_H = 225;
-        const img = new Image();
-        const url = URL.createObjectURL(file);
-
-        img.onload = () => {
-            try {
-                const canvas = document.createElement('canvas');
-                canvas.width = TARGET_W;
-                canvas.height = TARGET_H;
-                const ctx = canvas.getContext('2d');
-
-                const srcW = img.naturalWidth || img.width;
-                const srcH = img.naturalHeight || img.height;
-                if (!srcW || !srcH) {
-                    URL.revokeObjectURL(url);
-                    return callback(null);
-                }
-
-                // Cover-scale first
-                const scale = Math.max(TARGET_W / srcW, TARGET_H / srcH);
-                const drawW = Math.round(srcW * scale);
-                const drawH = Math.round(srcH * scale);
-                const dx = Math.round((TARGET_W - drawW) / 2);
-                const dy = Math.round((TARGET_H - drawH) / 2);
-
-                ctx.imageSmoothingEnabled = true;
-                ctx.imageSmoothingQuality = 'high';
-                ctx.clearRect(0, 0, TARGET_W, TARGET_H);
-                ctx.drawImage(img, dx, dy, drawW, drawH);
-
-                const dataURL = canvas.toDataURL('image/png');
-                URL.revokeObjectURL(url);
-                callback(dataURL);
-            } catch (e) {
-                URL.revokeObjectURL(url);
-                callback(null);
-            }
-        };
-
-        img.onerror = () => {
-            URL.revokeObjectURL(url);
-            callback(null);
-        };
-
-        img.src = url;
-    }
-
-    // Crop to a 400x400 square (center-cover), return PNG data URL via callback
-    function cropIconFileToDataURL(file, callback) {
-        const TARGET = 400;
-        const img = new Image();
-        const url = URL.createObjectURL(file);
-
-        img.onload = () => {
-            try {
-                const canvas = document.createElement('canvas');
-                canvas.width = TARGET;
-                canvas.height = TARGET;
-                const ctx = canvas.getContext('2d');
-
-                const srcW = img.naturalWidth || img.width;
-                const srcH = img.naturalHeight || img.height;
-                if (!srcW || !srcH) {
-                    URL.revokeObjectURL(url);
-                    return callback(null);
-                }
-
-                const scale = Math.max(TARGET / srcW, TARGET / srcH);
-                const drawW = Math.round(srcW * scale);
-                const drawH = Math.round(srcH * scale);
-                const dx = Math.round((TARGET - drawW) / 2);
-                const dy = Math.round((TARGET - drawH) / 2);
-
-                ctx.imageSmoothingEnabled = true;
-                ctx.imageSmoothingQuality = 'high';
-                ctx.clearRect(0, 0, TARGET, TARGET);
-                ctx.drawImage(img, dx, dy, drawW, drawH);
-
-                const dataURL = canvas.toDataURL('image/png');
-                URL.revokeObjectURL(url);
-                callback(dataURL);
-            } catch (e) {
-                URL.revokeObjectURL(url);
-                callback(null);
-            }
-        };
-
-        img.onerror = () => {
-            URL.revokeObjectURL(url);
-            callback(null);
-        };
-
-        img.src = url;
-    }
 
     function fetchGames() {
         return new Promise((resolve) => {
             $.get(`/api/titles`, function (data) {
                 const list = Array.isArray(data?.games) ? data.games : [];
-
                 totalGames = Number.isFinite(data?.total) ? data.total : list.length;
 
-                // Normalize each game: drop server-provided recognition flags
-                // and attach client-computed ones that are invariant to overrides.
                 games = list.map(g => {
-                    // remove server-side flags to avoid drift
                     const clone = { ...g };
-
-                    // compute & attach client flags
-                    const flags = computeRecognitionFlags(clone);
+                    // compute & attach client flags (invariant to overrides)
+                    const flags = window.Overrides.computeRecognitionFlags(clone);
                     clone.isUnrecognized = flags.isUnrecognized;
                     clone.hasTitleDb = flags.hasTitleDb;
-
                     return clone;
                 });
 
-                filteredGames = games.slice();  // shallow copy
-
+                filteredGames = games.slice();
                 resolve();
             }).fail(function () {
                 totalGames    = 0;
@@ -528,7 +281,6 @@
             });
         });
     }
-
 
     function renderGames() {
         // Ensure we always have arrays
@@ -546,13 +298,11 @@
             adjustIconSizes();
         }
 
-        // init version tooltips
-        const tooltipTriggerList = document.querySelectorAll('[data-bs-toggle="tooltip"]')
-        const tooltipList = [...tooltipTriggerList].map(tooltipTriggerEl => new bootstrap.Tooltip(tooltipTriggerEl))
-
-        // init version popovers
-        const popoverTriggerList = document.querySelectorAll('[data-bs-toggle="popover"]')
-        const popoverList = [...popoverTriggerList].map(popoverTriggerEl => new bootstrap.Popover(popoverTriggerEl))
+        // Bootstrap tooltips & popovers
+        const tooltipTriggerList = document.querySelectorAll('[data-bs-toggle="tooltip"]');
+        [...tooltipTriggerList].forEach(el => new bootstrap.Tooltip(el));
+        const popoverTriggerList = document.querySelectorAll('[data-bs-toggle="popover"]');
+        [...popoverTriggerList].forEach(el => new bootstrap.Popover(el));
     }
 
     function renderCardView() {
@@ -565,7 +315,7 @@
             gameGrid.append(`
                 <div class="col-12 text-center text-muted py-5">
                     <div class="mb-2"><i class="bi bi-collection"></i></div>
-                    <div>No titles to display yet.</div>
+                    <div>No titles to display.</div>
                 </div>
             `);
             updatePaginationControls(0);
@@ -580,22 +330,20 @@
         paginatedGames.forEach(function (game) {
             const gameCol = $('<div class="col game-col"></div>').addClass(`col-${12 / getColumnsForCardSize(cardSize)}`);
 
-            const card = $('<div class="card text-bg-dark game-card position-relative"></div>') // position-relative for star
+            const card = $('<div class="card text-bg-dark game-card"></div>')
                 .attr('data-title-id', game.title_id || '')
                 .attr('data-file-basename', game.file_basename || '')
                 .attr('data-identification-type', (game.identification_type || '').toLowerCase());
 
             const img = $('<img class="card-img">')
-                .attr('src', bannerUrlFor(game))
+                .attr('src', window.Overrides.bannerUrlFor(game))
                 .on('error', function () {
-                    if (this.src !== DEFAULT_BANNER) this.src = DEFAULT_BANNER;
+                    if (this.src !== window.DEFAULT_BANNER) this.src = window.DEFAULT_BANNER;
                 });
             card.append(img);
 
-
             const cardOverlay = $('<div class="card-img-overlay game-info"></div>');
 
-            // Title line with override editor pill
             const titleLine = $('<div class="d-flex align-items-center justify-content-between"></div>');
             const title = $('<h5 class="card-title game-title mb-1"></h5>').text(game.title_id_name || game.name || 'Unrecognized');
             titleLine.append(title);
@@ -640,9 +388,9 @@
                         .attr("data-bs-placement", "top");
 
                     if (game.version !== undefined && !game.version.length && Array.isArray(game.version)){
-                        versionBadge.attr("data-bs-title", "Version v0")
+                        versionBadge.attr("data-bs-title", "Version v0");
                     } else if (game.version !== undefined && game.version.length) {
-                        versionBadge.attr("data-bs-title", "Version v" + game.version)
+                        versionBadge.attr("data-bs-title", "Version v" + game.version);
                     }
                 }
                 tagsContainer.append(versionBadge);
@@ -653,14 +401,13 @@
                 tagsContainer.append(dlcBadge);
             }
 
-            // Inline "Edit" entry point for overrides
-            // Color + title reflect override state using Bootstrap classes.
-            const hasOvr = hasActiveOverride(game);
+            // Override edit pill
+            const hasOvr = window.Overrides.hasActiveOverride(game);
             const editPill = $('<button type="button" class="override-pill btn rounded-pill game-tag"></button>')
                 .addClass(hasOvr ? 'btn-success' : 'btn-secondary')
                 .attr('title', hasOvr ? 'Metadata override active. Click to edit.' : 'No override. Click to edit metadata.')
                 .html('<i class="bi bi-pencil-square"></i>')
-                .on('click', () => openOverrideEditor(game));
+                .on('click', () => window.Overrides.openOverrideEditor(game));
             tagsContainer.append(editPill);
 
             cardOverlay.append(tagsContainer);
@@ -682,7 +429,7 @@
             gameGrid.append(`
                 <div class="col-12 text-center text-muted py-5">
                     <div class="mb-2"><i class="bi bi-collection"></i></div>
-                    <div>No titles to display yet.</div>
+                    <div>No titles to display.</div>
                 </div>
             `);
             updatePaginationControls(0);
@@ -697,9 +444,9 @@
 
         paginatedGames.forEach(game => {
             const icon = $('<img class="game-icon">')
-                .attr('src', iconUrlFor(game))
+                .attr('src', window.Overrides.iconUrlFor(game))
                 .on('error', function () {
-                    if (this.src !== DEFAULT_ICON) this.src = DEFAULT_ICON;
+                    if (this.src !== window.DEFAULT_ICON) this.src = window.DEFAULT_ICON;
                 });
             gameGrid.append(icon);
         });
@@ -783,7 +530,7 @@
         $('.game-icon').css('width', `${iconSize}%`);
     }
 
-    // --- Filter persistence
+    // ---- Filters persistence and application ----
     function saveFiltersToStorage() {
         const filters = {
             type: [],
@@ -845,272 +592,6 @@
         }
     }
 
-    $(document).ready(function () {
-        const savedItemsPerPage = localStorage.getItem('itemsPerPage');
-        if (savedItemsPerPage) {
-            itemsPerPage = parseInt(savedItemsPerPage);
-        }
-
-        const savedCurrentView = localStorage.getItem('currentView');
-        if (savedCurrentView) {
-            currentView = savedCurrentView;
-        }
-
-        const savedCardSize = localStorage.getItem('cardSize');
-        if (savedCardSize){
-            cardSize = parseInt(savedCardSize);
-        }
-
-        // Fetch games and overrides first, then apply saved filters
-        Promise.all([fetchOverrides(), fetchGames()])
-            .then(() => {
-                // Now that both are ready, overlay names without touching has_override
-                reapplyAllOverridesToGames();
-                loadFiltersFromStorage();
-            })
-            .catch(() => {
-                // even on failure, try to render something
-                loadFiltersFromStorage();
-            });
-
-        // Event listeners for items per page dropdown
-        $('.items-per-page').click(function () {
-            itemsPerPage = $(this).data('value');
-            localStorage.setItem('itemsPerPage', itemsPerPage);
-            currentPage = 1; // Reset to first page
-            renderGames();
-        });
-
-        $('#applyCustomItemsPerPage').click(function () {
-            const customValue = $('#customItemsPerPage').val();
-            if (customValue && customValue > 0) {
-                itemsPerPage = parseInt(customValue);
-                localStorage.setItem('itemsPerPage', itemsPerPage);
-                currentPage = 1; // Reset to first page
-                renderGames();
-            }
-        });
-
-        // Event listener for card size slider
-        $('#cardSizeRange').on('input', function () {
-            cardSize = parseInt($(this).val());
-            localStorage.setItem('cardSize', cardSize);
-            if (currentView === 'icon') {
-                adjustIconSizes();
-            } else {
-                adjustCardSizes();
-            }
-        });
-
-        // Event listener for view buttons
-        $('.view-toggle-btn').click(function () {
-            $('.view-toggle-btn').removeClass("active"); 
-            $(this).addClass("active");
-            const view = $(this).data('view');
-            localStorage.setItem('currentView', view)
-            currentView = view;
-            renderGames();
-        });
-        
-        // Handle filter checkbox
-        $('.filterLabel').click(function() {
-            updateFilter();
-            applyFilters();
-            saveFiltersToStorage();
-        });
-
-        // Listen to input changes in the text filter input
-        $("#textFilter").on("input", function () {
-            const attributeText = $(this).val();
-            localStorage.setItem('searchTerm', attributeText);
-            filterBySearchText(attributeText);
-        });
-
-        // Close popovers
-        $(document).on('click', function (e) {
-            $('.popover').removeClass('show');
-            $('.popover').remove();
-        });
-
-        // Add click event on the popover to stop propagation
-        $(document).on('click', '.popover', function (e) {
-            e.stopPropagation(); // Prevent the click event from bubbling up
-        });
-
-        // When a new banner file is chosen, preview (400x225). If no icon provided, auto-derive icon preview (400x400).
-        $('#ovr-banner-file').on('change', function(){
-            const f = this.files && this.files[0];
-            bannerFileToUpload = f || null;
-            bannerRemoveRequested = false;
-
-            if (!bannerFileToUpload) {
-                // No selection -> revert to current override/game or placeholder
-                const current = $('#ovr-banner-preview-img').data('ovr') ? $('#ovr-banner-preview-img').attr('src') : null;
-                $('#ovr-banner-preview-img').attr('src', current || DEFAULT_BANNER);
-                $('#ovr-banner-remove').toggle(!!$('#ovr-banner-preview-img').data('ovr'));
-                return;
-            }
-
-            cropBannerFileToDataURL(bannerFileToUpload, function(dataURL){
-                if (!dataURL) {
-                    const fr = new FileReader();
-                    fr.onload = e => {
-                        $('#ovr-banner-preview-img').attr('src', e.target.result);
-                        $('#ovr-banner-remove').show();
-                        $('#ovr-banner-preview-img').removeData('ovr'); // pending override (not saved)
-                    };
-                    fr.readAsDataURL(bannerFileToUpload);
-                } else {
-                    $('#ovr-banner-preview-img').attr('src', dataURL);
-                    $('#ovr-banner-remove').show();
-                    $('#ovr-banner-preview-img').removeData('ovr'); // pending override
-                }
-
-                // If icon not provided and no saved override icon, derive icon preview from banner file
-                if (!iconFileToUpload && !$('#ovr-icon-preview-img').data('ovr')) {
-                    cropIconFileToDataURL(bannerFileToUpload, function(iconURL){
-                        $('#ovr-icon-preview-img').attr('src', iconURL || DEFAULT_ICON);
-                        if (iconURL) {
-                            $('#ovr-icon-remove').show();
-                            $('#ovr-icon-preview-img').removeData('ovr');
-                        }
-                    });
-                }
-            });
-        });
-
-        // When a new icon file is chosen, preview (400x400). If no banner provided, derive banner preview (400x225).
-        $('#ovr-icon-file').on('change', function(){
-            const f = this.files && this.files[0];
-            iconFileToUpload = f || null;
-            iconRemoveRequested = false;
-
-            if (!iconFileToUpload) {
-                const current = $('#ovr-icon-preview-img').data('ovr') ? $('#ovr-icon-preview-img').attr('src') : null;
-                $('#ovr-icon-preview-img').attr('src', current || DEFAULT_ICON);
-                $('#ovr-icon-remove').toggle(!!$('#ovr-icon-preview-img').data('ovr'));
-                return;
-            }
-
-            cropIconFileToDataURL(iconFileToUpload, function(dataURL){
-                if (!dataURL) {
-                    const fr = new FileReader();
-                    fr.onload = e => {
-                        $('#ovr-icon-preview-img').attr('src', e.target.result);
-                        $('#ovr-icon-remove').show();
-                        $('#ovr-icon-preview-img').removeData('ovr'); // pending override
-                    };
-                    fr.readAsDataURL(iconFileToUpload);
-                } else {
-                    $('#ovr-icon-preview-img').attr('src', dataURL);
-                    $('#ovr-icon-remove').show();
-                    $('#ovr-icon-preview-img').removeData('ovr'); // pending override
-                }
-
-                // Derive banner preview if none provided and no saved override banner
-                if (!bannerFileToUpload && !$('#ovr-banner-preview-img').data('ovr')) {
-                    cropBannerFileToDataURL(iconFileToUpload, function(bannerURL){
-                        $('#ovr-banner-preview-img').attr('src', bannerURL || DEFAULT_BANNER);
-                        if (bannerURL) {
-                            $('#ovr-banner-remove').show();
-                            $('#ovr-banner-preview-img').removeData('ovr');
-                        }
-                    });
-                }
-            });
-        });
-
-        // Overlay remove buttons: affect only overridden images (or newly chosen files)
-        $('#ovr-banner-remove').on('click', function(){
-            bannerFileToUpload = null;
-            bannerRemoveRequested = true;
-            $('#ovr-banner-file').val('');
-            $('#ovr-banner-preview-img').removeData('ovr');
-            $('#ovr-banner-preview-img').attr('src', DEFAULT_BANNER);
-            // keep icon state as-is
-            $(this).hide(); // until a saved or pending override is present again
-        });
-
-        $('#ovr-icon-remove').on('click', function(){
-            iconFileToUpload = null;
-            iconRemoveRequested = true;
-            $('#ovr-icon-file').val('');
-            $('#ovr-icon-preview-img').removeData('ovr');
-            $('#ovr-icon-preview-img').attr('src', DEFAULT_ICON);
-            $(this).hide();
-        });
-
-        // Pencil/edit buttons open the hidden file pickers
-        $('#ovr-banner-edit').on('click', () => $('#ovr-banner-file').trigger('click'));
-        $('#ovr-icon-edit').on('click',   () => $('#ovr-icon-file').trigger('click'));
-
-        // Drag & drop support per preview tile
-        function wireDropZone($wrap, kind) {
-            const over = () => $wrap.addClass('dragover');
-            const out  = () => $wrap.removeClass('dragover');
-
-            $wrap.on('dragenter dragover', function(e){ e.preventDefault(); e.stopPropagation(); over(); });
-            $wrap.on('dragleave dragend drop', function(e){ e.preventDefault(); e.stopPropagation(); out(); });
-
-            $wrap.on('drop', function(e){
-                const dt = e.originalEvent.dataTransfer;
-                if (!dt || !dt.files || !dt.files.length) return;
-
-                const file = dt.files[0];
-                if (!file || !file.type || !file.type.startsWith('image/')) return;
-
-                if (kind === 'banner') {
-                    try {
-                        // Some browsers disallow assigning to input.files — try first:
-                        $('#ovr-banner-file')[0].files = dt.files;
-                        $('#ovr-banner-file').trigger('change');
-                    } catch {
-                        // Fallback: process dropped file directly
-                        bannerFileToUpload = file;
-                        bannerRemoveRequested = false;
-                        cropBannerFileToDataURL(file, function(dataURL){
-                            if (dataURL) {
-                                $('#ovr-banner-preview-img').attr('src', dataURL).removeData('ovr');
-                                $('#ovr-banner-remove').show();
-                            }
-                            // auto-derive icon if needed and not already an override
-                            if (!$('#ovr-icon-preview-img').data('ovr')) {
-                                cropIconFileToDataURL(file, function(iconURL){
-                                    $('#ovr-icon-preview-img').attr('src', iconURL || DEFAULT_ICON);
-                                    if (iconURL) { $('#ovr-icon-remove').show(); $('#ovr-icon-preview-img').removeData('ovr'); }
-                                });
-                            }
-                        });
-                    }
-                } else {
-                    try {
-                        $('#ovr-icon-file')[0].files = dt.files;
-                        $('#ovr-icon-file').trigger('change');
-                    } catch {
-                        iconFileToUpload = file;
-                        iconRemoveRequested = false;
-                        cropIconFileToDataURL(file, function(dataURL){
-                            if (dataURL) {
-                                $('#ovr-icon-preview-img').attr('src', dataURL).removeData('ovr');
-                                $('#ovr-icon-remove').show();
-                            }
-                            // derive banner if needed and not already an override
-                            if (!$('#ovr-banner-preview-img').data('ovr')) {
-                                cropBannerFileToDataURL(file, function(bannerURL){
-                                    $('#ovr-banner-preview-img').attr('src', bannerURL || DEFAULT_BANNER);
-                                    if (bannerURL) { $('#ovr-banner-remove').show(); $('#ovr-banner-preview-img').removeData('ovr'); }
-                                });
-                            }
-                        });
-                    }
-                }
-            });
-        }
-
-        wireDropZone($('#ovr-banner-preview'), 'banner');
-        wireDropZone($('#ovr-icon-preview'),   'icon');
-    });
-
     // Function to filter cards based on input text
     function filterBySearchText(attributeText) {
         if (!attributeText) {
@@ -1162,13 +643,7 @@
     function findCommonElements(...arrays) {
         // Filter out empty arrays
         const nonEmptyArrays = arrays.filter(array => Array.isArray(array) && array.length > 0);
-
-        // If there are no non-empty arrays, return an empty array
-        if (nonEmptyArrays.length === 0) {
-            return [];
-        }
-
-        // Find common elements
+        if (nonEmptyArrays.length === 0) return [];
         return nonEmptyArrays.reduce((common, currentArray) => 
             common.filter(item => currentArray.includes(item))
         );
@@ -1176,9 +651,7 @@
 
     // Function to apply filters and show/hide game cards with animation
     function applyFilters() {
-        if (!Array.isArray(games)) {
-            games = [];
-        }
+        if (!Array.isArray(games)) games = [];
 
         if (
             activeTypeFilters.size === 0 &&
@@ -1224,10 +697,10 @@
 
             // Special
             if (activeSpecialFilters.has("Unrecognized")) {
-                gamesFilteredBySpecial = gamesFilteredBySpecial.concat(games.filter(game => isUnrecognizedGame(game)));
+                gamesFilteredBySpecial = gamesFilteredBySpecial.concat(games.filter(game => window.Overrides.isUnrecognizedGame(game)));
             }
             if (activeSpecialFilters.has("Overridden")) {
-                gamesFilteredBySpecial = gamesFilteredBySpecial.concat(games.filter(game => hasActiveOverride(game)));
+                gamesFilteredBySpecial = gamesFilteredBySpecial.concat(games.filter(game => window.Overrides.hasActiveOverride(game)));
             }
 
             // Find common elements
@@ -1251,246 +724,90 @@
         }
     }
 
-    // ---------- Override editor ----------
-    function openOverrideEditor(game) {
-        // Prefill with existing override (if any)
-        const k = keyForGame(game);
-        const ovr = k ? overridesByKey.get(k) : null;
+    $(document).ready(function () {
+        // Bind overrides module to our environment
+        window.Overrides.bindEnvironment({
+            getGames: () => games,
+            applyFilters: () => applyFilters()
+        });
+        window.Overrides.initDomBindings();
 
-        $('#ovr-id').val(ovr?.id || '');
-        $('#ovr-title-id').val(game.title_id || '');
-        $('#ovr-file-basename').val(game.file_basename || '');
-        $('#ovr-file-name').text(game.file_basename || '');
+        const savedItemsPerPage = localStorage.getItem('itemsPerPage');
+        if (savedItemsPerPage) itemsPerPage = parseInt(savedItemsPerPage);
 
-        $('#ovr-name').val(ovr?.name ?? (game.title_id_name || game.name || ''));
-        $('#ovr-publisher').val(ovr?.publisher ?? (game.publisher || ''));
-        $('#ovr-region').val(ovr?.region ?? '');
-        $('#ovr-description').val(ovr?.description ?? '');
-        $('#ovr-version').val(ovr?.version ?? '');
+        const savedCurrentView = localStorage.getItem('currentView');
+        if (savedCurrentView) currentView = savedCurrentView;
 
-        $('#btn-reset-override').toggle(!!ovr?.id);
+        const savedCardSize = localStorage.getItem('cardSize');
+        if (savedCardSize) cardSize = parseInt(savedCardSize);
 
-        // reset artwork state
-        bannerFileToUpload = null;
-        bannerRemoveRequested = false;
-        iconFileToUpload = null;
-        iconRemoveRequested = false;
-        $('#ovr-banner-file').val('');
-        $('#ovr-icon-file').val('');
-
-        // Determine current sources
-        const ovrBanner = ovr?.banner_path || ovr?.bannerUrl || null;
-        const ovrIcon   = ovr?.icon_path   || ovr?.iconUrl   || null;
-
-        const gameBanner = game.banner_path || game.bannerUrl || game.banner || null;
-        const gameIcon   = game.iconUrl || null;
-
-        // If we have override artwork, append the cache-buster so the modal sees the just-saved file.
-        let currentBanner = ovrBanner ? addBuster(ovrBanner) : (gameBanner || null);
-        let currentIcon   = ovrIcon   ? addBuster(ovrIcon)   : (gameIcon   || null);
-
-
-        // Always show previews, fill with placeholders if absent
-        if (!currentBanner && currentIcon) {
-            // derive banner from icon for parity
-            const img = new Image();
-            img.onload = () => {
-                const canvas = document.createElement('canvas');
-                canvas.width = 400; canvas.height = 225;
-                const ctx = canvas.getContext('2d');
-                const scale = Math.max(400 / img.width, 225 / img.height);
-                const w = Math.round(img.width * scale);
-                const h = Math.round(img.height * scale);
-                const dx = Math.round((400 - w) / 2);
-                const dy = Math.round((225 - h) / 2);
-                ctx.imageSmoothingEnabled = true;
-                ctx.imageSmoothingQuality = 'high';
-                ctx.clearRect(0,0,400,225);
-                ctx.drawImage(img, dx, dy, w, h);
-                $('#ovr-banner-preview-img').attr('src', canvas.toDataURL('image/png'));
-                $('#ovr-banner-preview-img').data('ovr', !!ovrBanner);
-                $('#ovr-banner-remove').toggle(!!ovrBanner);
-            };
-            img.src = currentIcon;
-        } else {
-            $('#ovr-banner-preview-img').attr('src', currentBanner || DEFAULT_BANNER);
-            $('#ovr-banner-preview-img').data('ovr', !!ovrBanner);
-            $('#ovr-banner-remove').toggle(!!ovrBanner);
-        }
-
-        if (!currentIcon && currentBanner) {
-            // derive icon from banner for parity
-            const img = new Image();
-            img.onload = () => {
-                const canvas = document.createElement('canvas');
-                canvas.width = 400; canvas.height = 400;
-                const ctx = canvas.getContext('2d');
-                const scale = Math.max(400 / img.width, 400 / img.height);
-                const w = Math.round(img.width * scale);
-                const h = Math.round(img.height * scale);
-                const dx = Math.round((400 - w) / 2);
-                const dy = Math.round((400 - h) / 2);
-                ctx.imageSmoothingEnabled = true;
-                ctx.imageSmoothingQuality = 'high';
-                ctx.clearRect(0,0,400,400);
-                ctx.drawImage(img, dx, dy, w, h);
-                $('#ovr-icon-preview-img').attr('src', canvas.toDataURL('image/png'));
-                $('#ovr-icon-preview-img').data('ovr', !!ovrIcon);
-                $('#ovr-icon-remove').toggle(!!ovrIcon);
-            };
-            img.src = currentBanner;
-        } else {
-            $('#ovr-icon-preview-img').attr('src', currentIcon || DEFAULT_ICON);
-            $('#ovr-icon-preview-img').data('ovr', !!ovrIcon);
-            $('#ovr-icon-remove').toggle(!!ovrIcon);
-        }
-
-        overrideModal().show();
-    }
-
-    // Utility: normalize string to null if blank
-    function nv(v){ const s = (v ?? '').toString().trim(); return s.length ? s : null; }
-    function numOrNull(v){ const s = (v ?? '').toString().trim(); return s ? Number(s) : null; }
-
-    // After a successful save/delete, update in-memory map and affected game objects, then re-render.
-    function finishOverrideMutationAndRefresh(modifiedKey) {
-        // Apply name overlay (doesn't touch any backend fields)
-        applyOverrideToGamesByKey(modifiedKey);
-
-        // Re-apply filters and render (star + filters derive from overridesByKey)
-        applyFilters();
-
-        overrideModal().hide();
-    }
-
-    async function saveOverride() {
-        const id = $('#ovr-id').val().trim();
-        const title_id = $('#ovr-title-id').val().trim();
-        const file_basename = $('#ovr-file-basename').val().trim();
-
-        const key = title_id ? title_id : (file_basename ? ('file:' + file_basename) : '');
-
-        // Build payload fields
-        const payload = {
-            name: nv($('#ovr-name').val()),
-            publisher: nv($('#ovr-publisher').val()),
-            region: nv($('#ovr-region').val()),
-            description: nv($('#ovr-description').val()),
-            version: numOrNull($('#ovr-version').val()),
-            enabled: true
-        };
-        if (title_id) payload.title_id = title_id;
-        else if (file_basename) payload.file_basename = file_basename;
-
-        const needMultipart = !!(bannerFileToUpload || bannerRemoveRequested || iconFileToUpload || iconRemoveRequested);
-
-        let url, method, options;
-        if (id) {
-            url = `/api/overrides/${id}`;
-            method = 'PUT';
-        } else {
-            url = '/api/overrides';
-            method = 'POST';
-        }
-
-        if (needMultipart) {
-            // multipart/form-data
-            const fd = new FormData();
-            Object.entries(payload).forEach(([k, v]) => {
-                if (v !== undefined && v !== null) fd.append(k, String(v));
+        // Fetch overrides + games, then overlay names and render with saved filters
+        Promise.all([window.Overrides.fetchOverrides(), fetchGames()])
+            .then(() => {
+                window.Overrides.reapplyAllOverridesToGames(games);
+                loadFiltersFromStorage();
+            })
+            .catch(() => {
+                loadFiltersFromStorage();
             });
-            if (bannerFileToUpload) fd.append('banner_file', bannerFileToUpload);
-            if (bannerRemoveRequested) fd.append('banner_remove', 'true');
 
-            if (iconFileToUpload)   fd.append('icon_file', iconFileToUpload);
-            if (iconRemoveRequested) fd.append('icon_remove', 'true');
+        // Items per page
+        $('.items-per-page').click(function () {
+            itemsPerPage = $(this).data('value');
+            localStorage.setItem('itemsPerPage', itemsPerPage);
+            currentPage = 1;
+            renderGames();
+        });
 
-            options = { method, body: fd };
-        } else {
-            // application/json
-            options = {
-                method,
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            };
-        }
-
-        let res;
-        try {
-            res = await fetch(url, options);
-        } catch (e) {
-            alert('Failed to save override');
-            return;
-        }
-
-        if (!res.ok) {
-            const err = await res.json().catch(() => ({}));
-            alert(err?.error || 'Failed to save override');
-            return;
-        }
-
-        // Clear transient artwork state after a successful save
-        bannerFileToUpload = null;
-        bannerRemoveRequested = false;
-        iconFileToUpload = null;
-        iconRemoveRequested = false;
-        $('#ovr-banner-file').val('');
-        $('#ovr-icon-file').val('');
-
-        let saved = null;
-        try { saved = await res.json(); } catch { /* some APIs return no body */ }
-
-        if (saved && (saved.title_id || saved.file_basename)) {
-            const k = keyForOverride(saved);
-            if (k) {
-                overridesByKey.set(k, saved);
-                ARTWORK_BUSTER++; // force-refresh override artwork
-                finishOverrideMutationAndRefresh(k);
-                return;
+        $('#applyCustomItemsPerPage').click(function () {
+            const customValue = $('#customItemsPerPage').val();
+            if (customValue && customValue > 0) {
+                itemsPerPage = parseInt(customValue);
+                localStorage.setItem('itemsPerPage', itemsPerPage);
+                currentPage = 1;
+                renderGames();
             }
-        }
+        });
 
-        // Fallback: refetch and refresh
-        await fetchOverrides();
-        ARTWORK_BUSTER++; // force-refresh override artwork
-        finishOverrideMutationAndRefresh(key);
-    }
+        // Card size slider
+        $('#cardSizeRange').on('input', function () {
+            cardSize = parseInt($(this).val());
+            localStorage.setItem('cardSize', cardSize);
+            if (currentView === 'icon') adjustIconSizes(); else adjustCardSizes();
+        });
 
-    async function resetOverride() {
-        const id = $('#ovr-id').val().trim();
-        if (!id) return;
-        if (!confirm('Remove override and revert to default metadata?')) return;
+        // View buttons
+        $('.view-toggle-btn').click(function () {
+            $('.view-toggle-btn').removeClass("active"); 
+            $(this).addClass("active");
+            const view = $(this).data('view');
+            localStorage.setItem('currentView', view);
+            currentView = view;
+            renderGames();
+        });
 
-        try {
-            const res = await fetch(`/api/overrides/${id}`, { method: 'DELETE' });
-            if (!res.ok) {
-                alert('Failed to delete override');
-                return;
-            }
-        } catch {
-            alert('Failed to delete override');
-            return;
-        }
+        // Filters
+        $('.filterLabel').click(function() {
+            updateFilter();
+            applyFilters();
+            saveFiltersToStorage();
+        });
 
-        // Figure out which key was affected before we refetch
-        const title_id = $('#ovr-title-id').val().trim();
-        const file_basename = $('#ovr-file-basename').val().trim();
-        const key = title_id ? title_id : (file_basename ? ('file:' + file_basename) : '');
+        // Search
+        $("#textFilter").on("input", function () {
+            const attributeText = $(this).val();
+            localStorage.setItem('searchTerm', attributeText);
+            filterBySearchText(attributeText);
+        });
 
-        // Update local map: remove key and update UI immediately
-        if (key && overridesByKey.has(key)) {
-            overridesByKey.delete(key);
-        } else {
-            // If we don't know, just refresh overrides to stay in sync
-            await fetchOverrides();
-        }
-
-        ARTWORK_BUSTER++; // force-refresh override artwork
-        finishOverrideMutationAndRefresh(key);
-    }
-
-    $('#btn-save-override').click(saveOverride);
-    $('#btn-reset-override').click(resetOverride);
-
+        // Close popovers on document click
+        $(document).on('click', function () {
+            $('.popover').removeClass('show');
+            $('.popover').remove();
+        });
+        $(document).on('click', '.popover', function (e) {
+            e.stopPropagation();
+        });
+    });
 </script>
 {% endblock %}
