@@ -2,6 +2,10 @@
 
 
 {% block content %}
+<script>
+  window.DEFAULT_BANNER = 'https://placehold.co/400x225/png?text=Image+Unavailable';
+  window.DEFAULT_ICON   = 'https://placehold.co/400x400/png?text=Image+Unavailable';
+</script>
 {% include 'nav.html' %}
 <div id="content" class="container-fluid mt-3">
 
@@ -180,50 +184,51 @@
           <input id="ovr-version" type="number" class="form-control" placeholder="e.g. 10000">
         </div>
 
-        <!-- Artwork upload -->
+        <!-- Artwork (previews-only + hidden file inputs) -->
         <div class="mb-2">
-          <label class="form-label">Artwork</label>
-          <div class="row g-2">
-            <div class="col-12">
-              <div class="input-group">
-                <span class="input-group-text">Banner</span>
-                <input id="ovr-banner-file" type="file" class="form-control" accept=".jpg,.jpeg,.png,.webp">
-              </div>
-              <div class="form-text">Banner target size: <strong>400×225</strong> (16:9). JPG/PNG/WEBP.</div>
-            </div>
-            <div class="col-12">
-              <div class="input-group">
-                <span class="input-group-text">Icon</span>
-                <input id="ovr-icon-file" type="file" class="form-control" accept=".jpg,.jpeg,.png,.webp">
-              </div>
-              <div class="form-text">Icon target size: <strong>400×400</strong> (square). JPG/PNG/WEBP.</div>
-            </div>
-          </div>
-        </div>
+            <label class="form-label d-block">Artwork</label>
 
-        <!-- Previews -->
-        <div class="mb-2">
-          <label class="form-label d-block">Previews (what will be saved)</label>
-          <div class="ovr-preview-grid">
-            <!-- Banner preview -->
-            <div class="ovr-preview-wrap" id="ovr-banner-preview" style="display:none;">
-              <img id="ovr-banner-preview-img" src="" alt="Banner preview" class="ovr-preview-banner rounded border">
-              <button type="button" class="ovr-remove-x" id="ovr-banner-remove" title="Remove overridden banner" aria-label="Remove overridden banner">
-                ×
-              </button>
-              <div class="ovr-caption">Banner (400×225)</div>
+            <!-- hidden file inputs (triggered by the edit buttons) -->
+            <input id="ovr-banner-file" type="file" class="visually-hidden" accept=".jpg,.jpeg,.png,.webp">
+            <input id="ovr-icon-file"   type="file" class="visually-hidden" accept=".jpg,.jpeg,.png,.webp">
+
+            <div class="ovr-preview-grid">
+                <!-- Banner preview -->
+                <div class="ovr-preview-wrap" id="ovr-banner-preview" data-kind="banner">
+                <img id="ovr-banner-preview-img" src="" alt="Banner preview" class="ovr-preview-banner rounded border"
+                    onerror="if(this.src!==window.DEFAULT_BANNER)this.src=window.DEFAULT_BANNER;">
+                <!-- remove (top-left) -->
+                <button type="button" class="ovr-remove-x" id="ovr-banner-remove"
+                        title="Remove overridden banner" aria-label="Remove overridden banner">×</button>
+                <!-- edit (top-right) -->
+                <button type="button" class="ovr-edit-btn" id="ovr-banner-edit"
+                        title="Choose banner image" aria-label="Choose banner image">
+                    <i class="bi bi-pencil-square"></i>
+                </button>
+                <div class="ovr-caption">Banner (400×225)</div>
+                </div>
+
+                <!-- Icon preview -->
+                <div class="ovr-preview-wrap" id="ovr-icon-preview" data-kind="icon">
+                <img id="ovr-icon-preview-img" src="" alt="Icon preview" class="ovr-preview-icon rounded border"
+                    onerror="if(this.src!==window.DEFAULT_ICON)this.src=window.DEFAULT_ICON;">
+                <!-- remove (top-left) -->
+                <button type="button" class="ovr-remove-x" id="ovr-icon-remove"
+                        title="Remove overridden icon" aria-label="Remove overridden icon">×</button>
+                <!-- edit (top-right) -->
+                <button type="button" class="ovr-edit-btn" id="ovr-icon-edit"
+                        title="Choose icon image" aria-label="Choose icon image">
+                    <i class="bi bi-pencil-square"></i>
+                </button>
+                <div class="ovr-caption">Icon (400×400)</div>
+                </div>
             </div>
-            <!-- Icon preview -->
-            <div class="ovr-preview-wrap" id="ovr-icon-preview" style="display:none;">
-              <img id="ovr-icon-preview-img" src="" alt="Icon preview" class="ovr-preview-icon rounded border">
-              <button type="button" class="ovr-remove-x" id="ovr-icon-remove" title="Remove overridden icon" aria-label="Remove overridden icon">
-                ×
-              </button>
-              <div class="ovr-caption">Icon (400×400)</div>
+
+            <div class="form-text mt-1">
+                Drag & drop images onto the previews, or click the pencil to choose files.
             </div>
-          </div>
         </div>
-        <!-- /Artwork upload -->
+        <!-- /Artwork -->
 
       </div>
       <div class="modal-footer justify-content-between">
@@ -240,67 +245,96 @@
 </div>
 
 <style>
-  .override-pill {
-    border: 1px solid rgba(255,255,255,.25);
-    background: rgba(255,255,255,.06);
-    color: #fff;
-    padding: .15rem .45rem;
-    border-radius: 999px;
-    font-size: .85rem;
-    line-height: 1;
-  }
-  .override-pill:hover { background: rgba(255,255,255,.12); }
+    .override-pill {
+        border: 1px solid rgba(255,255,255,.25);
+        background: rgba(255,255,255,.06);
+        color: #fff;
+        padding: .15rem .45rem;
+        border-radius: 999px;
+        font-size: .85rem;
+        line-height: 1;
+    }
+    .override-pill:hover { background: rgba(255,255,255,.12); }
+
     .ovr-preview-grid {
-    display: grid;
-    gap: .75rem;
-    grid-template-columns: 1fr 1fr;
-    align-items: start;
-  }
-  .ovr-preview-wrap {
-    position: relative;
-    background: rgba(255,255,255,.03);
-    padding: .5rem;
-    border-radius: .5rem;
-    border: 1px solid rgba(255,255,255,.15);
-  }
-  .ovr-preview-banner {
-    width: 100%;
-    aspect-ratio: 16 / 9;   /* 400x225 */
-    object-fit: cover;
-    display: block;
-  }
-  .ovr-preview-icon {
-    width: 100%;
-    aspect-ratio: 1 / 1;    /* 400x400 */
-    object-fit: cover;
-    display: block;
-  }
-  .ovr-caption {
-    font-size: .8rem;
-    opacity: .75;
-    margin-top: .25rem;
-    text-align: center;
-  }
-  .ovr-remove-x {
-    position: absolute;
-    top: .35rem;
-    right: .35rem;
-    width: 28px;
-    height: 28px;
-    line-height: 24px;
-    text-align: center;
-    border-radius: 50%;
-    border: 2px solid #000;      /* black outline */
-    background: #fff;            /* white fill */
-    color: #000;                 /* black cross */
-    font-weight: 800;
-    font-size: 18px;
-    cursor: pointer;
-    opacity: .9;
-    box-shadow: 0 1px 2px rgba(0,0,0,.4);
-    padding: 0;
-  }
-  .ovr-remove-x:hover { opacity: 1; }
+        display: grid;
+        gap: .75rem;
+        grid-template-columns: 1fr 1fr;
+        align-items: start;
+    }
+    .ovr-preview-wrap {
+        position: relative;
+        background: rgba(255,255,255,.03);
+        padding: .5rem;
+        border-radius: .5rem;
+        border: 1px solid rgba(255,255,255,.15);
+        transition: border-color .15s ease, background .15s ease;
+    }
+    .ovr-preview-wrap.dragover {
+        border-color: #0d6efd;
+        background: rgba(13,110,253,.1);
+    }
+    .ovr-preview-banner {
+        width: 100%;
+        aspect-ratio: 16 / 9;   /* 400x225 */
+        object-fit: cover;
+        display: block;
+    }
+    .ovr-preview-icon {
+        width: 100%;
+        aspect-ratio: 1 / 1;    /* 400x400 */
+        object-fit: cover;
+        display: block;
+    }
+    .ovr-caption {
+        font-size: .8rem;
+        opacity: .75;
+        margin-top: .25rem;
+        text-align: center;
+    }
+
+    /* remove button: top-left */
+    .ovr-remove-x {
+        position: absolute;
+        top: .35rem;
+        left: .35rem;
+        width: 28px;
+        height: 28px;
+        line-height: 24px;
+        text-align: center;
+        border-radius: 50%;
+        border: 2px solid #000;
+        background: #fff;
+        color: #000;
+        font-weight: 800;
+        font-size: 18px;
+        cursor: pointer;
+        opacity: .9;
+        box-shadow: 0 1px 2px rgba(0,0,0,.4);
+        padding: 0;
+    }
+    .ovr-remove-x:hover { opacity: 1; }
+
+    /* edit button: top-right */
+    .ovr-edit-btn {
+        position: absolute;
+        top: .35rem;
+        right: .35rem;
+        width: 30px;
+        height: 30px;
+        border-radius: 8px;
+        border: none;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(255,255,255,.9);
+        color: #000;
+        cursor: pointer;
+        box-shadow: 0 1px 2px rgba(0,0,0,.4);
+    }
+    .ovr-edit-btn:hover {
+        background: #fff;
+    }
 </style>
 
 <script>
@@ -317,16 +351,24 @@
     let iconFileToUpload   = null;     // File object or null
     let iconRemoveRequested = false;   // bool
 
+    // Forces browsers to refetch updated artwork after saves/resets
+    let ARTWORK_BUSTER = Date.now();
+
     // --- Overrides state ---
     // key: title_id or "file:<file_basename>"  -> override object
     const overridesByKey = new Map();
     const overrideModal = () => bootstrap.Modal.getOrCreateInstance('#overrideEditorModal');
 
     // --- Default artwork fallbacks ---
-    const DEFAULT_BANNER = 'https://placehold.co/400x225/png?text=Image+Unavailable';
-    const DEFAULT_ICON   = 'https://placehold.co/400x400/png?text=Image+Unavailable';
+    const DEFAULT_BANNER = window.DEFAULT_BANNER;
+    const DEFAULT_ICON   = window.DEFAULT_ICON;
 
     function _trimmedOrNull(u) { return (typeof u === 'string' && u.trim().length) ? u.trim() : null; }
+
+    function addBuster(url){
+        if (!url) return url;
+        return `${url}${url.includes('?') ? '&' : '?'}b=${ARTWORK_BUSTER}`;
+    }
 
     // --- Helpers to correlate overrides <-> games and mutate UI state ---
     function keyForGame(game) {
@@ -429,9 +471,10 @@
 
     function bannerUrlFor(game){
         const ovr = getOverrideForGame(game);
-        // Priority: override.banner -> game.banner -> fallback to icon -> default
+        const ovrUrl = _trimmedOrNull(ovr?.banner_path) || _trimmedOrNull(ovr?.bannerUrl);
+        if (ovrUrl) return addBuster(ovrUrl);
+
         return (
-            _trimmedOrNull(ovr?.banner_path) || _trimmedOrNull(ovr?.bannerUrl) ||
             _trimmedOrNull(game.banner_path) || _trimmedOrNull(game.bannerUrl) || _trimmedOrNull(game.banner) ||
             _trimmedOrNull(game.iconUrl) || DEFAULT_BANNER
         );
@@ -439,9 +482,10 @@
 
     function iconUrlFor(game){
         const ovr = getOverrideForGame(game);
-        // Priority: override.icon -> game.icon -> fallback to banner -> default
+        const ovrUrl = _trimmedOrNull(ovr?.icon_path) || _trimmedOrNull(ovr?.iconUrl);
+        if (ovrUrl) return addBuster(ovrUrl);
+
         return (
-            _trimmedOrNull(ovr?.icon_path) || _trimmedOrNull(ovr?.iconUrl) ||
             _trimmedOrNull(game.iconUrl) || _trimmedOrNull(game.icon) ||
             _trimmedOrNull(game.banner_path) || _trimmedOrNull(game.bannerUrl) || _trimmedOrNull(game.banner) ||
             DEFAULT_ICON
@@ -557,8 +601,6 @@
                 games = list.map(g => {
                     // remove server-side flags to avoid drift
                     const clone = { ...g };
-                    delete clone.is_unrecognized;
-                    delete clone.identified;
 
                     // compute & attach client flags
                     const flags = computeRecognitionFlags(clone);
@@ -634,7 +676,6 @@
             const card = $('<div class="card text-bg-dark game-card position-relative"></div>') // position-relative for star
                 .attr('data-title-id', game.title_id || '')
                 .attr('data-file-basename', game.file_basename || '')
-                .attr('data-identified', game.identified ? 'true' : 'false')
                 .attr('data-identification-type', (game.identification_type || '').toLowerCase());
 
             const img = $('<img class="card-img">')
@@ -677,7 +718,7 @@
                 const smallName = $('<small></small>').text(`${game.name} | `);
                 description.append(smallName);
             }
-            const smallId = $('<small></small>').text(game.id);
+            const smallId = $('<small></small>').text(game.id || game.title_id || game.app_id || '');
             description.append(smallId);
             cardOverlay.append(description);
 
@@ -789,7 +830,7 @@
         const totalPages = Math.max(1, Math.ceil(nbDisplayedGames / itemsPerPage));
 
         // Previous button
-        const prevButton = $('<li class="page-item"></li>').addClass(`page-item ${currentPage === 1 ? 'disabled' : ''}`).html(`
+        const prevButton = $('<li class="page-item"></li>').addClass(`${currentPage === 1 ? 'disabled' : ''}`).html(`
                 <a class="page-link" href="#" aria-label="Previous">
                     <span aria-hidden="true">&laquo;</span>
                 </a>`);
@@ -804,7 +845,7 @@
 
         // Page numbers
         for (let i = 1; i <= totalPages; i++) {
-            const pageButton = $('<li class="page-item"></li>').addClass(`page-item ${i === currentPage ? 'active' : ''}`).html(`<a class="page-link" href="#">${i}</a>`);
+            const pageButton = $('<li class="page-item"></li>').addClass(`${i === currentPage ? 'active' : ''}`).html(`<a class="page-link" href="#">${i}</a>`);
             pageButton.click(function (e) {
                 e.preventDefault();
                 currentPage = i;
@@ -814,7 +855,7 @@
         }
 
         // Next button
-        const nextButton = $('<li class="page-item"></li>').addClass(`page-item ${currentPage === totalPages ? 'disabled' : ''}`).html(`
+        const nextButton = $('<li class="page-item"></li>').addClass(`${currentPage === totalPages ? 'disabled' : ''}`).html(`
                 <a class="page-link" href="#" aria-label="Next">
                     <span aria-hidden="true">&raquo;</span>
                 </a>`);
@@ -1005,11 +1046,10 @@
             bannerRemoveRequested = false;
 
             if (!bannerFileToUpload) {
-                // cleared input; if no override banner, hide banner preview
-                if (!$('#ovr-banner-preview-img').data('ovr')) {
-                    $('#ovr-banner-preview').hide();
-                    $('#ovr-banner-preview-img').attr('src','');
-                }
+                // No selection -> revert to current override/game or placeholder
+                const current = $('#ovr-banner-preview-img').data('ovr') ? $('#ovr-banner-preview-img').attr('src') : null;
+                $('#ovr-banner-preview-img').attr('src', current || DEFAULT_BANNER);
+                $('#ovr-banner-remove').toggle(!!$('#ovr-banner-preview-img').data('ovr'));
                 return;
             }
 
@@ -1018,28 +1058,23 @@
                     const fr = new FileReader();
                     fr.onload = e => {
                         $('#ovr-banner-preview-img').attr('src', e.target.result);
-                        $('#ovr-banner-preview').show();
-                        // Treat this as an overridden image (pending). Allow clearing with ×.
                         $('#ovr-banner-remove').show();
-                        $('#ovr-banner-preview-img').removeData('ovr'); // not a saved override yet
+                        $('#ovr-banner-preview-img').removeData('ovr'); // pending override (not saved)
                     };
                     fr.readAsDataURL(bannerFileToUpload);
                 } else {
                     $('#ovr-banner-preview-img').attr('src', dataURL);
-                    $('#ovr-banner-preview').show();
-                    // Treat this as a pending override so the user can clear it with ×
                     $('#ovr-banner-remove').show();
-                    $('#ovr-banner-preview-img').removeData('ovr'); // not a saved override
+                    $('#ovr-banner-preview-img').removeData('ovr'); // pending override
                 }
-                // If icon not provided (no file chosen and no override icon), derive icon preview from banner file
+
+                // If icon not provided and no saved override icon, derive icon preview from banner file
                 if (!iconFileToUpload && !$('#ovr-icon-preview-img').data('ovr')) {
                     cropIconFileToDataURL(bannerFileToUpload, function(iconURL){
+                        $('#ovr-icon-preview-img').attr('src', iconURL || DEFAULT_ICON);
                         if (iconURL) {
-                            $('#ovr-icon-preview-img').attr('src', iconURL);
-                            $('#ovr-icon-preview').show();
-                            // Treat this as an overridden image (pending). Allow clearing with ×.
                             $('#ovr-icon-remove').show();
-                            $('#ovr-icon-preview-img').removeData('ovr'); // not a saved override yet
+                            $('#ovr-icon-preview-img').removeData('ovr');
                         }
                     });
                 }
@@ -1053,10 +1088,9 @@
             iconRemoveRequested = false;
 
             if (!iconFileToUpload) {
-                if (!$('#ovr-icon-preview-img').data('ovr')) {
-                    $('#ovr-icon-preview').hide();
-                    $('#ovr-icon-preview-img').attr('src','');
-                }
+                const current = $('#ovr-icon-preview-img').data('ovr') ? $('#ovr-icon-preview-img').attr('src') : null;
+                $('#ovr-icon-preview-img').attr('src', current || DEFAULT_ICON);
+                $('#ovr-icon-remove').toggle(!!$('#ovr-icon-preview-img').data('ovr'));
                 return;
             }
 
@@ -1065,25 +1099,23 @@
                     const fr = new FileReader();
                     fr.onload = e => {
                         $('#ovr-icon-preview-img').attr('src', e.target.result);
-                        $('#ovr-icon-preview').show();
-                        // Treat this as a pending override so the user can clear it with ×
                         $('#ovr-icon-remove').show();
-                        $('#ovr-icon-preview-img').removeData('ovr'); // not a saved override
+                        $('#ovr-icon-preview-img').removeData('ovr'); // pending override
                     };
                     fr.readAsDataURL(iconFileToUpload);
                 } else {
                     $('#ovr-icon-preview-img').attr('src', dataURL);
-                    $('#ovr-icon-preview').show();
-                    // Treat this as a pending override so the user can clear it with ×
                     $('#ovr-icon-remove').show();
-                    $('#ovr-icon-preview-img').removeData('ovr'); // not a saved override
+                    $('#ovr-icon-preview-img').removeData('ovr'); // pending override
                 }
-                // Derive banner preview if none provided and no override banner
+
+                // Derive banner preview if none provided and no saved override banner
                 if (!bannerFileToUpload && !$('#ovr-banner-preview-img').data('ovr')) {
                     cropBannerFileToDataURL(iconFileToUpload, function(bannerURL){
+                        $('#ovr-banner-preview-img').attr('src', bannerURL || DEFAULT_BANNER);
                         if (bannerURL) {
-                            $('#ovr-banner-preview-img').attr('src', bannerURL);
-                            $('#ovr-banner-preview').show();
+                            $('#ovr-banner-remove').show();
+                            $('#ovr-banner-preview-img').removeData('ovr');
                         }
                     });
                 }
@@ -1092,30 +1124,93 @@
 
         // Overlay remove buttons: affect only overridden images (or newly chosen files)
         $('#ovr-banner-remove').on('click', function(){
-            // if (!confirm('Remove the banner image for this title?')) return;
             bannerFileToUpload = null;
             bannerRemoveRequested = true;
             $('#ovr-banner-file').val('');
-            $('#ovr-banner-preview-img').removeData('ovr'); // no override present
-            // Hide preview only if we don’t have a derived preview from icon file
-            if (!iconFileToUpload) {
-                $('#ovr-banner-preview').hide();
-                $('#ovr-banner-preview-img').attr('src','');
-            }
-            // Removing an overridden banner doesn’t clear a user-chosen icon file
+            $('#ovr-banner-preview-img').removeData('ovr');
+            $('#ovr-banner-preview-img').attr('src', DEFAULT_BANNER);
+            // keep icon state as-is
+            $(this).hide(); // until a saved or pending override is present again
         });
 
         $('#ovr-icon-remove').on('click', function(){
-            // if (!confirm('Remove the icon image for this title?')) return;
             iconFileToUpload = null;
             iconRemoveRequested = true;
             $('#ovr-icon-file').val('');
             $('#ovr-icon-preview-img').removeData('ovr');
-            if (!bannerFileToUpload) {
-                $('#ovr-icon-preview').hide();
-                $('#ovr-icon-preview-img').attr('src','');
-            }
-        });    
+            $('#ovr-icon-preview-img').attr('src', DEFAULT_ICON);
+            $(this).hide();
+        });
+
+        // Pencil/edit buttons open the hidden file pickers
+        $('#ovr-banner-edit').on('click', () => $('#ovr-banner-file').trigger('click'));
+        $('#ovr-icon-edit').on('click',   () => $('#ovr-icon-file').trigger('click'));
+
+        // Drag & drop support per preview tile
+        function wireDropZone($wrap, kind) {
+            const over = () => $wrap.addClass('dragover');
+            const out  = () => $wrap.removeClass('dragover');
+
+            $wrap.on('dragenter dragover', function(e){ e.preventDefault(); e.stopPropagation(); over(); });
+            $wrap.on('dragleave dragend drop', function(e){ e.preventDefault(); e.stopPropagation(); out(); });
+
+            $wrap.on('drop', function(e){
+                const dt = e.originalEvent.dataTransfer;
+                if (!dt || !dt.files || !dt.files.length) return;
+
+                const file = dt.files[0];
+                if (!file || !file.type || !file.type.startsWith('image/')) return;
+
+                if (kind === 'banner') {
+                    try {
+                        // Some browsers disallow assigning to input.files — try first:
+                        $('#ovr-banner-file')[0].files = dt.files;
+                        $('#ovr-banner-file').trigger('change');
+                    } catch {
+                        // Fallback: process dropped file directly
+                        bannerFileToUpload = file;
+                        bannerRemoveRequested = false;
+                        cropBannerFileToDataURL(file, function(dataURL){
+                            if (dataURL) {
+                                $('#ovr-banner-preview-img').attr('src', dataURL).removeData('ovr');
+                                $('#ovr-banner-remove').show();
+                            }
+                            // auto-derive icon if needed and not already an override
+                            if (!$('#ovr-icon-preview-img').data('ovr')) {
+                                cropIconFileToDataURL(file, function(iconURL){
+                                    $('#ovr-icon-preview-img').attr('src', iconURL || DEFAULT_ICON);
+                                    if (iconURL) { $('#ovr-icon-remove').show(); $('#ovr-icon-preview-img').removeData('ovr'); }
+                                });
+                            }
+                        });
+                    }
+                } else {
+                    try {
+                        $('#ovr-icon-file')[0].files = dt.files;
+                        $('#ovr-icon-file').trigger('change');
+                    } catch {
+                        iconFileToUpload = file;
+                        iconRemoveRequested = false;
+                        cropIconFileToDataURL(file, function(dataURL){
+                            if (dataURL) {
+                                $('#ovr-icon-preview-img').attr('src', dataURL).removeData('ovr');
+                                $('#ovr-icon-remove').show();
+                            }
+                            // derive banner if needed and not already an override
+                            if (!$('#ovr-banner-preview-img').data('ovr')) {
+                                cropBannerFileToDataURL(file, function(bannerURL){
+                                    $('#ovr-banner-preview-img').attr('src', bannerURL || DEFAULT_BANNER);
+                                    if (bannerURL) { $('#ovr-banner-remove').show(); $('#ovr-banner-preview-img').removeData('ovr'); }
+                                });
+                            }
+                        });
+                    }
+                }
+            });
+        }
+
+        wireDropZone($('#ovr-banner-preview'), 'banner');
+        wireDropZone($('#ovr-icon-preview'),   'icon');
     });
 
     // Function to filter cards based on input text
@@ -1292,35 +1387,14 @@
         const gameBanner = game.banner_path || game.bannerUrl || game.banner || null;
         const gameIcon   = game.iconUrl || null;
 
-        const currentBanner = ovrBanner || gameBanner || '';
-        const currentIcon   = ovrIcon   || gameIcon   || '';
+        // If we have override artwork, append the cache-buster so the modal sees the just-saved file.
+        let currentBanner = ovrBanner ? addBuster(ovrBanner) : (gameBanner || null);
+        let currentIcon   = ovrIcon   ? addBuster(ovrIcon)   : (gameIcon   || null);
 
-        // Banner preview
-        if (currentBanner) {
-            $('#ovr-banner-preview-img').attr('src', currentBanner);
-            $('#ovr-banner-preview').show();
-        } else {
-            $('#ovr-banner-preview').hide();
-            $('#ovr-banner-preview-img').attr('src','');
-        }
-        // Mark whether preview is using an override (controls whether “×” is visible)
-        $('#ovr-banner-preview-img').data('ovr', !!ovrBanner);
-        $('#ovr-banner-remove').toggle(!!ovrBanner);
 
-        // Icon preview
-        if (currentIcon) {
-            $('#ovr-icon-preview-img').attr('src', currentIcon);
-            $('#ovr-icon-preview').show();
-        } else {
-            $('#ovr-icon-preview').hide();
-            $('#ovr-icon-preview-img').attr('src','');
-        }
-        $('#ovr-icon-preview-img').data('ovr', !!ovrIcon);
-        $('#ovr-icon-remove').toggle(!!ovrIcon);
-
-        // If one exists but the other doesn’t, mirror backend’s fallback parity for the preview
+        // Always show previews, fill with placeholders if absent
         if (!currentBanner && currentIcon) {
-            // Derive banner preview from icon
+            // derive banner from icon for parity
             const img = new Image();
             img.onload = () => {
                 const canvas = document.createElement('canvas');
@@ -1336,13 +1410,18 @@
                 ctx.clearRect(0,0,400,225);
                 ctx.drawImage(img, dx, dy, w, h);
                 $('#ovr-banner-preview-img').attr('src', canvas.toDataURL('image/png'));
-                $('#ovr-banner-preview').show();
-                $('#ovr-banner-preview-img').data('ovr', false); // derived from game/ovr icon, not removable as banner
-                $('#ovr-banner-remove').hide();
+                $('#ovr-banner-preview-img').data('ovr', !!ovrBanner);
+                $('#ovr-banner-remove').toggle(!!ovrBanner);
             };
             img.src = currentIcon;
-        } else if (!currentIcon && currentBanner) {
-            // Derive icon preview from banner
+        } else {
+            $('#ovr-banner-preview-img').attr('src', currentBanner || DEFAULT_BANNER);
+            $('#ovr-banner-preview-img').data('ovr', !!ovrBanner);
+            $('#ovr-banner-remove').toggle(!!ovrBanner);
+        }
+
+        if (!currentIcon && currentBanner) {
+            // derive icon from banner for parity
             const img = new Image();
             img.onload = () => {
                 const canvas = document.createElement('canvas');
@@ -1358,16 +1437,18 @@
                 ctx.clearRect(0,0,400,400);
                 ctx.drawImage(img, dx, dy, w, h);
                 $('#ovr-icon-preview-img').attr('src', canvas.toDataURL('image/png'));
-                $('#ovr-icon-preview').show();
-                $('#ovr-icon-preview-img').data('ovr', false);
-                $('#ovr-icon-remove').hide();
+                $('#ovr-icon-preview-img').data('ovr', !!ovrIcon);
+                $('#ovr-icon-remove').toggle(!!ovrIcon);
             };
             img.src = currentBanner;
+        } else {
+            $('#ovr-icon-preview-img').attr('src', currentIcon || DEFAULT_ICON);
+            $('#ovr-icon-preview-img').data('ovr', !!ovrIcon);
+            $('#ovr-icon-remove').toggle(!!ovrIcon);
         }
 
         overrideModal().show();
     }
-
 
     // Utility: normalize string to null if blank
     function nv(v){ const s = (v ?? '').toString().trim(); return s.length ? s : null; }
@@ -1465,6 +1546,7 @@
             const k = keyForOverride(saved);
             if (k) {
                 overridesByKey.set(k, saved);
+                ARTWORK_BUSTER++; // force-refresh override artwork
                 finishOverrideMutationAndRefresh(k);
                 return;
             }
@@ -1472,6 +1554,7 @@
 
         // Fallback: refetch and refresh
         await fetchOverrides();
+        ARTWORK_BUSTER++; // force-refresh override artwork
         finishOverrideMutationAndRefresh(key);
     }
 
@@ -1504,6 +1587,7 @@
             await fetchOverrides();
         }
 
+        ARTWORK_BUSTER++; // force-refresh override artwork
         finishOverrideMutationAndRefresh(key);
     }
 
