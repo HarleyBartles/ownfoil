@@ -20,7 +20,7 @@ aupup8Es6bcDZQKkRsbOeR9T74tkj+k44QrjZo8xpX9tlJAKEEmwDlyAg0O5CLX3
 CQIDAQAB
 -----END PUBLIC KEY-----'''
 
-def _tf_version_to_int(version_str):
+def _version_str_to_int(version_str):
     """
     Convert '1.2.3' -> 10203 (A*10000 + B*100 + C).
     Returns None if not parseable. Tinfoil wants numeric `version`.
@@ -52,7 +52,7 @@ def build_titledb_from_overrides():
 
         if ov.name:
             entry["name"] = ov.name
-        vnum = _tf_version_to_int(ov.version)
+        vnum = _version_str_to_int(ov.version)
         if vnum is not None:
             entry["version"] = vnum
         if ov.region:
@@ -72,7 +72,7 @@ def build_titledb_from_overrides():
         if total_bytes:
             entry["size"] = int(total_bytes)
 
-        # Optional: if you add a 'rank' column later, include it:
+        # Optional: we can include a 'rank' entry, if we choose to add a column later
         # if ov.rank is not None: entry["rank"] = int(ov.rank)
 
         titledb_map[tid] = entry

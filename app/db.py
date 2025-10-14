@@ -299,77 +299,38 @@ def _safe_name(s: str) -> str:
     return re.sub(r'[\\/:*?"<>|]+', '', s)  # remove Windows-illegal chars
 
 def get_shop_files():
-    from overrides import merge_with_override
     shop_files = []
     results = Files.query.options(db.joinedload(Files.apps).joinedload(Apps.title)).all()
+
+    def _with_unidentified_suffix(name: str, ext: str) -> str:
+        # safer than .replace(): only strip the final extension
+        if name.endswith(f".{ext}"):
+            base = name[:-(len(ext) + 1)]
+        else:
+            base = name
+        return f"{base} (unidentified).{ext}"
 
     for file in results:
         # Get the first app associated with this file using the many-to-many relationship
         app = file.apps[0] if file.apps else None
+        ext = file.extension.lower() if file.extension else "unknown"
 
-        # Base payload we might expose elsewhere too
-        base_meta = {
-            "file_id": file.id,
-            "file_basename": file.filename,  # using filename as our basename selector
-            "size": file.size,
-            "identified": file.identified,
-            "title_id": app.title.title_id if app else None,
-            "app_id": app.app_id if app else None,
-            "app_version": app.app_version if app else None,
-            "name": None,              # will be filled by override if provided
-            "icon_url": None,          # can be filled later where you build icon paths
-            "banner_url": None,
-        }
-
-        # Apply override (if any)
-        merged = merge_with_override(base_meta)
-
-        o_name = merged.get("name")
-        o_app_id = merged.get("app_id")
-        o_title_id = merged.get("title_id")
-        o_app_ver = merged.get("app_version")
-
-        ext = file.extension
-
-        # Build the bracket part first (this is what Tinfoil parses)
-        bracket = None
-        if o_app_id:
-            v = 0 if (o_app_ver is None or str(o_app_ver).strip() == "") else int(o_app_ver)
-            bracket = f"[{o_app_id}][v{v}]"
-        elif o_title_id:
-            bracket = f"[{o_title_id}]"
-        elif file.identified and app:
+        if file.identified and app:
             if file.multicontent or ext.startswith('x'):
-                bracket = f"[{app.title.title_id}]"
+                # multi-content / XC* / XCI case: use title_id bracket
+                title_id = app.title.title_id
+                final_filename = f"[{title_id}].{ext}"
             else:
-                bracket = f"[{app.app_id}][v{app.app_version}]"
-
-        # If we still don’t have a bracket, fall back to original (Tinfoil may skip)
-        if not bracket:
-            final_filename = file.filename
+                # single-content NSP/NSZ etc.: use app_id + version bracket
+                final_filename = f"[{app.app_id}][v{app.app_version}].{ext}"
         else:
-            # Prepend human-readable title with a space after so search finds it
-            prefix = f"{_safe_name(o_name)} " if o_name else ""
-            final_filename = f"{prefix}{bracket}.{ext}"
+            final_filename = _with_unidentified_suffix(file.filename, ext)
 
-        entry = {
+        shop_files.append({
             "id": file.id,
             "filename": final_filename,
             "size": file.size,
-            "overridden": merged.get("overridden", False),
-        }
-
-        if o_name:
-            entry["name"] = o_name
-            entry["title"] = o_name
-        if o_app_id:
-            entry["app_id"] = o_app_id
-        if o_title_id:
-            entry["title_id"] = o_title_id
-        if o_app_ver is not None:
-            entry["app_version"] = o_app_ver
-
-        shop_files.append(entry)
+        })
 
     return shop_files
 
