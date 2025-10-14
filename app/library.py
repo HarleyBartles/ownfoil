@@ -574,8 +574,7 @@ def generate_library():
     if not base or 'library' not in base:
         return []
 
-    # Ensure UI flags exist
-    return _apply_ident_flags(base['library'])
+    return base['library']
 
 def load_base_library():
     """
@@ -637,31 +636,26 @@ def _add_files_without_apps(games_info):
 
         games_info.append({
             # No app or title linkage
+            'name': None,
             'app_id': None,
             'app_version': None,
             'app_type': APP_TYPE_BASE,        # treat as base-ish for filtering
             'title_id': None,
-            'title_id_name': 'Unrecognized',
+            'title_id_name': None,
 
             # Identification flags
             'identified': False,
             'identification_type': (f.identification_type or 'unidentified'),
-            'is_unrecognized': True,
 
             # What the UI needs
             'file_basename': fname,
             'filename': fname,
-
-            # Artwork
-            'bannerUrl': 'https://placehold.co/400x225/png?text=Image+Unavailable',
-            'iconUrl': 'https://placehold.co/400x400/png?text=Image+Unavailable',
 
             # Other fields the UI expects to exist
             'owned': True,
             'has_latest_version': True,
             'has_all_dlcs': True,
             'version': [],
-            'name': 'Unrecognized'
         })
 
 def generate_base_library():
@@ -779,37 +773,3 @@ def generate_base_library():
 
     finally:
         titles_lib.unload_titledb()
-
-def _apply_ident_flags(library_list: list[dict]) -> list[dict]:
-    """
-    Apply UI flags derived purely from the BASE library (no overrides).
-    Computes `identified`, `identification_type`, and `is_unrecognized` if missing.
-    Does not mutate the input list.
-    """
-    out = []
-    for src in library_list:
-        dst = src.copy()
-
-        identified = dst.get("identified")
-        ident_type = (dst.get("identification_type") or "").lower()
-        name_lower = (dst.get("title_id_name") or "").strip().lower()
-
-        # If `identified` wasn't provided, infer it from ident_type/name
-        if identified is None:
-            if ident_type in ("not_in_titledb", "exception", "unidentified"):
-                identified = False
-            else:
-                identified = name_lower != "unrecognized"
-
-        # If `identification_type` wasn't provided, pick a sensible default
-        if not ident_type:
-            ident_type = "cnmt" if identified else "unidentified"
-
-        dst["identified"] = bool(identified)
-        dst["identification_type"] = ident_type
-        dst["is_unrecognized"] = (
-            (not dst["identified"]) or ident_type in ("not_in_titledb", "exception", "unidentified")
-        )
-
-        out.append(dst)
-    return out

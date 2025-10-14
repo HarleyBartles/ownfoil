@@ -322,6 +322,12 @@
     const overridesByKey = new Map();
     const overrideModal = () => bootstrap.Modal.getOrCreateInstance('#overrideEditorModal');
 
+    // --- Default artwork fallbacks ---
+    const DEFAULT_BANNER = 'https://placehold.co/400x225/png?text=Image+Unavailable';
+    const DEFAULT_ICON   = 'https://placehold.co/400x400/png?text=Image+Unavailable';
+
+    function _trimmedOrNull(u) { return (typeof u === 'string' && u.trim().length) ? u.trim() : null; }
+
     // --- Helpers to correlate overrides <-> games and mutate UI state ---
     function keyForGame(game) {
         if (game?.title_id) return game.title_id;
@@ -397,7 +403,24 @@
         return !!(o && o.enabled !== false);
     }
 
-    const isUnrecognizedGame = (game) => !!(game && game.is_unrecognized);
+    function computeRecognitionFlags(game) {
+        const tidNameRaw = (game?._orig?.title_id_name ?? game.title_id_name ?? '').trim();
+        const hasTitleDb =
+            !!tidNameRaw &&
+            tidNameRaw.toLowerCase() !== 'unrecognized' &&
+            tidNameRaw.toLowerCase() !== 'unidentified';
+        return { isUnrecognized: !hasTitleDb, hasTitleDb };
+    }
+
+    const isUnrecognizedGame = (game) => {
+        if (!game) return false;
+        if (typeof game.isUnrecognized === 'boolean') return game.isUnrecognized;
+        const flags = computeRecognitionFlags(game);
+        // cache on object for reuse
+        game.isUnrecognized = flags.isUnrecognized;
+        game.hasTitleDb = flags.hasTitleDb;
+        return game.isUnrecognized;
+    };
 
     function getOverrideForGame(game){
         const k = keyForGame(game);
@@ -406,21 +429,22 @@
 
     function bannerUrlFor(game){
         const ovr = getOverrideForGame(game);
-        // Priority: override.banner_path/bannerUrl -> game.banner_path/bannerUrl -> fallback to iconUrl
+        // Priority: override.banner -> game.banner -> fallback to icon -> default
         return (
-            ovr?.banner_path || ovr?.bannerUrl ||
-            game.banner_path || game.bannerUrl ||
-            game.banner || game.iconUrl || ''
+            _trimmedOrNull(ovr?.banner_path) || _trimmedOrNull(ovr?.bannerUrl) ||
+            _trimmedOrNull(game.banner_path) || _trimmedOrNull(game.bannerUrl) || _trimmedOrNull(game.banner) ||
+            _trimmedOrNull(game.iconUrl) || DEFAULT_BANNER
         );
     }
 
     function iconUrlFor(game){
         const ovr = getOverrideForGame(game);
-        // Priority: override.icon_path/iconUrl -> game.iconUrl -> fallback to bannerUrl
+        // Priority: override.icon -> game.icon -> fallback to banner -> default
         return (
-            ovr?.icon_path || ovr?.iconUrl ||
-            game.iconUrl ||
-            bannerUrlFor(game) || ''
+            _trimmedOrNull(ovr?.icon_path) || _trimmedOrNull(ovr?.iconUrl) ||
+            _trimmedOrNull(game.iconUrl) || _trimmedOrNull(game.icon) ||
+            _trimmedOrNull(game.banner_path) || _trimmedOrNull(game.bannerUrl) || _trimmedOrNull(game.banner) ||
+            DEFAULT_ICON
         );
     }
 
@@ -526,8 +550,24 @@
             $.get(`/api/titles`, function (data) {
                 const list = Array.isArray(data?.games) ? data.games : [];
 
-                totalGames    = Number.isFinite(data?.total) ? data.total : list.length;
-                games         = list;
+                totalGames = Number.isFinite(data?.total) ? data.total : list.length;
+
+                // Normalize each game: drop server-provided recognition flags
+                // and attach client-computed ones that are invariant to overrides.
+                games = list.map(g => {
+                    // remove server-side flags to avoid drift
+                    const clone = { ...g };
+                    delete clone.is_unrecognized;
+                    delete clone.identified;
+
+                    // compute & attach client flags
+                    const flags = computeRecognitionFlags(clone);
+                    clone.isUnrecognized = flags.isUnrecognized;
+                    clone.hasTitleDb = flags.hasTitleDb;
+
+                    return clone;
+                });
+
                 filteredGames = games.slice();  // shallow copy
 
                 resolve();
@@ -539,6 +579,7 @@
             });
         });
     }
+
 
     function renderGames() {
         // Ensure we always have arrays
@@ -596,7 +637,11 @@
                 .attr('data-identified', game.identified ? 'true' : 'false')
                 .attr('data-identification-type', (game.identification_type || '').toLowerCase());
 
-            const img = $('<img class="card-img"></img>').attr('src', bannerUrlFor(game));
+            const img = $('<img class="card-img">')
+                .attr('src', bannerUrlFor(game))
+                .on('error', function () {
+                    if (this.src !== DEFAULT_BANNER) this.src = DEFAULT_BANNER;
+                });
             card.append(img);
 
             // --- Override star indicator (not clickable) ---
@@ -634,8 +679,6 @@
             }
             const smallId = $('<small></small>').text(game.id);
             description.append(smallId);
-            const small = $('<small></small>').text(game.id);
-            description.append(small);
             cardOverlay.append(description);
 
             const tagsContainer = $('<div class="tags-container d-flex gap-1 align-items-center"></div>');
@@ -714,7 +757,11 @@
         const paginatedGames = baseGames.slice(start, end);
 
         paginatedGames.forEach(game => {
-            const icon = $('<img class="game-icon">').attr('src', iconUrlFor(game));
+            const icon = $('<img class="game-icon">')
+                .attr('src', iconUrlFor(game))
+                .on('error', function () {
+                    if (this.src !== DEFAULT_ICON) this.src = DEFAULT_ICON;
+                });
             gameGrid.append(icon);
         });
 
