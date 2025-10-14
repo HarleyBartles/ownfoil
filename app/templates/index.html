@@ -246,15 +246,10 @@
 
 <style>
     .override-pill {
-        border: 1px solid rgba(255,255,255,.25);
-        background: rgba(255,255,255,.06);
-        color: #fff;
-        padding: .15rem .45rem;
-        border-radius: 999px;
         font-size: .85rem;
         line-height: 1;
     }
-    .override-pill:hover { background: rgba(255,255,255,.12); }
+    .override-pill:hover { opacity: .95; }
 
     .ovr-preview-grid {
         display: grid;
@@ -685,17 +680,6 @@
                 });
             card.append(img);
 
-            // --- Override star indicator (not clickable) ---
-            const hasOvr = hasActiveOverride(game);
-            const star = $('<i></i>')
-                .addClass(hasOvr ? 'bi bi-star-fill' : 'bi bi-star')
-                .addClass('text-blue')
-                .attr('title', hasOvr ? 'Override active' : 'No override');
-
-            const starWrap = $('<div class="position-absolute top-0 end-0 p-2" style="font-size:1.25rem;"></div>')
-                .append(star);
-            card.append(starWrap);
-            // ------------------------------------------------
 
             const cardOverlay = $('<div class="card-img-overlay game-info"></div>');
 
@@ -703,14 +687,6 @@
             const titleLine = $('<div class="d-flex align-items-center justify-content-between"></div>');
             const title = $('<h5 class="card-title game-title mb-1"></h5>').text(game.title_id_name || game.name || 'Unrecognized');
             titleLine.append(title);
-
-            // Inline "Edit" entry point for overrides
-            const editPill = $('<button type="button" class="override-pill btn btn-sm"></button>')
-                .attr('title', 'Edit MetaData')
-                .html('<i class="bi bi-pencil-square"></i>')
-                .on('click', () => openOverrideEditor(game));
-            titleLine.append(editPill);
-
             cardOverlay.append(titleLine);
 
             const description = $('<p class="card-text game-description mb-2"></p>');
@@ -764,6 +740,16 @@
                 const dlcBadge = $('<span class="badge rounded-pill game-tag"></span>').addClass(`text-bg-${game.has_all_dlcs ? 'success' : 'warning'}`).html('<i class="bi bi-box-seam-fill"></i>');
                 tagsContainer.append(dlcBadge);
             }
+
+            // Inline "Edit" entry point for overrides
+            // Color + title reflect override state using Bootstrap classes.
+            const hasOvr = hasActiveOverride(game);
+            const editPill = $('<button type="button" class="override-pill btn rounded-pill game-tag"></button>')
+                .addClass(hasOvr ? 'btn-success' : 'btn-secondary')
+                .attr('title', hasOvr ? 'Metadata override active. Click to edit.' : 'No override. Click to edit metadata.')
+                .html('<i class="bi bi-pencil-square"></i>')
+                .on('click', () => openOverrideEditor(game));
+            tagsContainer.append(editPill);
 
             cardOverlay.append(tagsContainer);
             card.append(cardOverlay);
