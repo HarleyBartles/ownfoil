@@ -23,8 +23,18 @@
   // ----------------- Helpers -----------------
   function _trimmedOrNull(u) { return (typeof u === 'string' && u.trim().length) ? u.trim() : null; }
   function trimOrNull(v) { return _trimmedOrNull((v ?? '').toString()); }
-  function numOrNull(v) { const trimmed = _trimmedOrNull((v ?? '').toString()); return trimmed !== null ? Number(trimmed) : null; }
-  function addBuster(url) { if (!url) return url; return `${url}${url.includes('?') ? '&' : '?'}b=${ARTWORK_BUSTER}`;}
+  function numOrNull(v) {
+    const trimmed = _trimmedOrNull((v ?? '').toString());
+    if (trimmed === null) return null;
+    const n = Number(trimmed);
+    return Number.isFinite(n) ? n : null;
+  }
+  function addBuster(url) {
+    if (!url) return url;
+    // Skip data URLs and blob URLs
+    if (/^(data:|blob:)/i.test(url)) return url;
+    return `${url}${url.includes('?') ? '&' : '?'}b=${ARTWORK_BUSTER}`;
+  }
 
   function keyForGame(game) {
     if (game?.title_id) return game.title_id;
