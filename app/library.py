@@ -3,6 +3,7 @@ import json
 import hashlib
 import os
 import shutil
+from collections import defaultdict
 from typing import Optional
 from constants import *
 from db import *
@@ -449,64 +450,192 @@ def identify_library_files(library):
 
 def add_missing_apps_to_db():
     logger.info('Adding missing apps to database...')
-    titles = get_all_titles()
+    titles_lib.load_titledb()
+
     apps_added = 0
+    commit_every = 250
 
-    for n, title in enumerate(titles):
-        title_id = title.title_id
-        title_db_id = get_title_id_db_id(title_id)
+    def _chunked(sequence, size):
+        for idx in range(0, len(sequence), size):
+            yield sequence[idx:idx + size]
 
-        # --- BASE (create placeholder v0 only if no BASE exists at all) ---
-        has_any_base = Apps.query.filter_by(app_id=title_id, app_type=APP_TYPE_BASE).first() is not None
-        if not has_any_base:
+    def _map_title_ids(title_ids):
+        if not title_ids:
+            return {}
+        mapping = {}
+        normalized = [tid.upper() for tid in set(title_ids) if isinstance(tid, str)]
+        chunk_size = 900  # stay below sqlite variable limit
+        for chunk in _chunked(normalized, chunk_size):
+            rows = (
+                db.session.query(Titles.title_id, Titles.id)
+                .filter(Titles.title_id.in_(chunk))
+                .all()
+            )
+            for title_id, db_id in rows:
+                if title_id:
+                    mapping[title_id.upper()] = db_id
+        return mapping
+
+    def _ensure_missing_base_apps():
+        added = 0
+        pending_commits = 0
+        missing_base_rows = (
+            db.session.query(Titles.id, Titles.title_id)
+            .filter(~Titles.apps.any(Apps.app_type == APP_TYPE_BASE))
+            .all()
+        )
+        for title_db_id, title_id in missing_base_rows:
+            if not title_id:
+                continue
             _, created = _get_or_create_app(
-                app_id=title_id,
+                app_id=title_id.upper(),
                 app_version="0",
                 app_type=APP_TYPE_BASE,
                 title_db_id=title_db_id
             )
             if created:
-                apps_added += 1
+                added += 1
+                pending_commits += 1
                 logger.debug(f'Added missing base app placeholder v0: {title_id}')
+                if pending_commits >= commit_every:
+                    db.session.commit()
+                    pending_commits = 0
+        if pending_commits:
+            db.session.commit()
+        return added
 
-        # Add missing update versions
-        title_versions = titles_lib.get_all_existing_versions(title_id) or []
-        update_app_id = title_id[:-3] + '800'  # base->update transform
-        for version_info in title_versions:
-            version = str(version_info['version'])
-            _, created = _get_or_create_app(
-                app_id=update_app_id,
-                app_version=version,
-                app_type=APP_TYPE_UPD,
-                title_db_id=title_db_id
-            )
-            if created:
-                apps_added += 1
-                logger.debug(f'Added missing update app: {update_app_id} v{version}')
+    def _ensure_missing_update_apps():
+        versions_db = getattr(titles_lib, "_versions_db", {}) or {}
+        if not versions_db:
+            return 0
 
-        # --- DLCs (all known DLC app_ids + versions) ---
-        title_dlc_ids = titles_lib.get_all_existing_dlc(title_id) or []
-        for dlc_app_id in title_dlc_ids:
-            dlc_versions = titles_lib.get_all_app_existing_versions(dlc_app_id) or []
-            for dlc_version in dlc_versions:
+        title_map = _map_title_ids([tid.upper() for tid in versions_db.keys()])
+        if not title_map:
+            return 0
+
+        existing_updates = defaultdict(set)
+        for app_id, app_version in (
+            db.session.query(Apps.app_id, Apps.app_version)
+            .filter(Apps.app_type == APP_TYPE_UPD)
+        ):
+            if app_id:
+                existing_updates[app_id.upper()].add(str(app_version))
+
+        added = 0
+        pending_commits = 0
+        for title_lower, version_entries in versions_db.items():
+            title_id = title_lower.upper()
+            if len(title_id) != 16:
+                continue
+            title_db_id = title_map.get(title_id)
+            if not title_db_id:
+                continue
+
+            update_app_id = (title_id[:-3] + '800').upper()
+            known_versions = existing_updates.setdefault(update_app_id, set())
+
+            for version_key in version_entries.keys():
+                version_str = str(version_key)
+                if version_str in known_versions:
+                    continue
                 _, created = _get_or_create_app(
-                    app_id=dlc_app_id,
-                    app_version=str(dlc_version),
-                    app_type=APP_TYPE_DLC,
+                    app_id=update_app_id,
+                    app_version=version_str,
+                    app_type=APP_TYPE_UPD,
                     title_db_id=title_db_id
                 )
                 if created:
-                    apps_added += 1
-                    logger.debug(f'Added missing DLC app: {dlc_app_id} v{dlc_version}')
-
-        # Commit every 100 titles to avoid excessive memory use
-        if (n + 1) % 100 == 0:
+                    known_versions.add(version_str)
+                    added += 1
+                    pending_commits += 1
+                    logger.debug(f'Added missing update app: {update_app_id} v{version_str}')
+                    if pending_commits >= commit_every:
+                        db.session.commit()
+                        pending_commits = 0
+        if pending_commits:
             db.session.commit()
-            logger.info(f'Processed {n + 1}/{len(titles)} titles, added {apps_added} missing apps so far')
+        return added
 
-    # Final commit
-    db.session.commit()
-    logger.info(f'Finished adding missing apps. Total apps added: {apps_added}')
+    def _ensure_missing_dlc_apps():
+        cnmts_db = getattr(titles_lib, "_cnmts_db", {}) or {}
+        if not cnmts_db:
+            return 0
+
+        dlc_index = defaultdict(lambda: defaultdict(set))
+        for app_id_lower, version_map in cnmts_db.items():
+            app_id = app_id_lower.upper()
+            for version_key, metadata in version_map.items():
+                if not isinstance(metadata, dict):
+                    continue
+                if metadata.get('titleType') != 130:
+                    continue
+                base_tid = metadata.get('otherApplicationId')
+                if base_tid:
+                    base_tid = base_tid.upper()
+                else:
+                    try:
+                        base_tid = titles_lib.get_title_id_from_app_id(app_id, APP_TYPE_DLC)
+                    except Exception:
+                        base_tid = None
+                    if base_tid:
+                        base_tid = base_tid.upper()
+                if not base_tid or len(base_tid) != 16:
+                    continue
+                dlc_index[base_tid][app_id].add(str(version_key))
+
+        if not dlc_index:
+            return 0
+
+        title_map = _map_title_ids(dlc_index.keys())
+        if not title_map:
+            return 0
+
+        existing_dlcs = defaultdict(set)
+        for app_id, app_version in (
+            db.session.query(Apps.app_id, Apps.app_version)
+            .filter(Apps.app_type == APP_TYPE_DLC)
+        ):
+            if app_id:
+                existing_dlcs[app_id.upper()].add(str(app_version))
+
+        added = 0
+        pending_commits = 0
+        for base_title_id, dlc_apps in dlc_index.items():
+            title_db_id = title_map.get(base_title_id)
+            if not title_db_id:
+                continue
+            for dlc_app_id, versions in dlc_apps.items():
+                dlc_app_id_upper = dlc_app_id.upper()
+                known_versions = existing_dlcs.setdefault(dlc_app_id_upper, set())
+                for version_str in versions:
+                    version_str = str(version_str)
+                    if version_str in known_versions:
+                        continue
+                    _, created = _get_or_create_app(
+                        app_id=dlc_app_id_upper,
+                        app_version=version_str,
+                        app_type=APP_TYPE_DLC,
+                        title_db_id=title_db_id
+                    )
+                    if created:
+                        known_versions.add(version_str)
+                        added += 1
+                        pending_commits += 1
+                        logger.debug(f'Added missing DLC app: {dlc_app_id_upper} v{version_str}')
+                        if pending_commits >= commit_every:
+                            db.session.commit()
+                            pending_commits = 0
+        if pending_commits:
+            db.session.commit()
+        return added
+
+    try:
+        apps_added += _ensure_missing_base_apps()
+        apps_added += _ensure_missing_update_apps()
+        apps_added += _ensure_missing_dlc_apps()
+        logger.info(f'Finished adding missing apps. Total apps added: {apps_added}')
+    finally:
+        titles_lib.unload_titledb()
 
 def process_library_identification(app):
     logger.info(f"Starting library identification process for all libraries...")
