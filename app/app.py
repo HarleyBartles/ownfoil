@@ -18,6 +18,8 @@ from auth import *
 import titles
 from utils import *
 from library import *
+from overrides import *
+from cache import regenerate_all_caches
 import titledb
 import os
 
@@ -107,6 +109,8 @@ def init():
 
 os.makedirs(CONFIG_DIR, exist_ok=True)
 os.makedirs(DATA_DIR, exist_ok=True)
+os.makedirs(BANNERS_UPLOAD_DIR, exist_ok=True)
+os.makedirs(ICONS_UPLOAD_DIR, exist_ok=True)
 
 ## Global variables
 app_settings = {}
@@ -188,12 +192,17 @@ def create_app():
     # TODO: generate random secret_key
     app.config['SECRET_KEY'] = '8accb915665f11dfa15c2db1a4e8026905f57716'
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+    app.config.setdefault("BANNERS_UPLOAD_DIR", BANNERS_UPLOAD_DIR)
+    app.config.setdefault("BANNERS_UPLOAD_URL_PREFIX", BANNERS_UPLOAD_URL_PREFIX)
+    app.config.setdefault("ICONS_UPLOAD_DIR", ICONS_UPLOAD_DIR)
+    app.config.setdefault("ICONS_UPLOAD_URL_PREFIX", ICONS_UPLOAD_URL_PREFIX)
 
     db.init_app(app)
     migrate.init_app(app, db)
     login_manager.init_app(app)
 
     app.register_blueprint(auth_blueprint)
+    app.register_blueprint(overrides_blueprint)
 
     return app
 
@@ -266,7 +275,13 @@ def tinfoil_access(f):
     return _tinfoil_access
 
 def access_shop():
-    return render_template('index.html', title='Library', admin_account_created=admin_account_created(), valid_keys=app_settings['titles']['valid_keys'])
+    return render_template(
+        'index.html',
+        title='Library',
+        admin_account_created=admin_account_created(),
+        valid_keys=app_settings['titles']['valid_keys'],
+        placeholder_text=app_settings['shop']['placeholder_text']
+    )
 
 @access_required('shop')
 def access_shop_auth():
@@ -274,6 +289,36 @@ def access_shop_auth():
 
 @app.route('/')
 def index():
+
+    def _build_tinfoil_shop_response():
+        """
+        Uses the cached shop snapshot (files + titledb) and wraps it with:
+          - success MOTD
+          - optional referrer (when host verified)
+        Returns a conditional (ETag) response, JSON or encrypted bytes depending on settings.
+        """
+        payload, etag = generate_shop()
+
+        # Wrap with MOTD and referrer (host verification happens in @tinfoil_access)
+        shop = {
+            "success": app_settings['shop']['motd']
+        }
+        if getattr(request, "verified_host", None):
+            shop["referrer"] = f"https://{request.verified_host}"
+
+        # Merge the cached payload
+        shop.update(payload)
+
+        if app_settings['shop']['encrypt']:
+            blob = encrypt_shop(shop)
+            resp = Response(blob, mimetype='application/octet-stream')
+        else:
+            resp = jsonify(shop)
+
+        # Enable cheap 304s
+        resp.set_etag(etag)
+        resp.headers["Cache-Control"] = "no-cache, private"
+        return resp.make_conditional(request)
 
     @tinfoil_access
     def access_tinfoil_shop():
@@ -285,12 +330,7 @@ def index():
             # enforce client side host verification
             shop["referrer"] = f"https://{request.verified_host}"
             
-        shop["files"] = gen_shop_files(db)
-
-        if app_settings['shop']['encrypt']:
-            return Response(encrypt_shop(shop), mimetype='application/octet-stream')
-
-        return jsonify(shop)
+        return _build_tinfoil_shop_response()
     
     if all(header in request.headers for header in TINFOIL_HEADERS):
     # if True:
@@ -440,16 +480,28 @@ def upload_file():
     } 
     return jsonify(resp)
 
+@app.route("/uploads/banners/<path:filename>")
+def uploaded_banners(filename):
+    return send_from_directory(app.config["BANNERS_UPLOAD_DIR"], filename, conditional=True)
+
+@app.route("/uploads/icons/<path:filename>")
+def uploaded_icons(filename):
+    return send_from_directory(app.config["ICONS_UPLOAD_DIR"], filename, conditional=True)
 
 @app.route('/api/titles', methods=['GET'])
 @access_required('shop')
 def get_all_titles_api():
-    titles_library = generate_library()
-
-    return jsonify({
+    titles_library, etag_hash = generate_library()
+    payload = {
         'total': len(titles_library),
         'games': titles_library
-    })
+    }
+
+    resp = jsonify(payload)
+    resp.set_etag(etag_hash)
+    resp.headers["Vary"] = "Authorization"
+    resp.headers["Cache-Control"] = "no-cache, private"
+    return resp.make_conditional(request)
 
 @app.route('/api/get_game/<int:id>')
 @tinfoil_access
@@ -463,18 +515,17 @@ def serve_game(id):
 @debounce(10)
 def post_library_change():
     with app.app_context():
-        titles.load_titledb()
-        process_library_identification(app)
-        add_missing_apps_to_db()
-        update_titles() # Ensure titles are updated after identification
-        # remove missing files
-        remove_missing_files_from_db()
-        process_library_organization(app, watcher) # Pass the watcher instance to skip organizer move/delete events
-        # The process_library_identification already handles updating titles and generating library
-        # So, we just need to ensure titles_library is updated from the generated library
-        generate_library()
-        titles.identification_in_progress_count -= 1
-        titles.unload_titledb()
+        with titles.titledb_session("post_library_change"):
+            process_library_identification(app)
+            add_missing_apps_to_db()
+            update_titles()  # Ensure titles are updated after identification
+            # remove missing files
+            remove_missing_files_from_db()
+            process_library_organization(app, watcher) # Pass the watcher instance to skip organizer move/delete events
+
+        # refresh caches after leaving the titledb session
+        regenerate_all_caches()
+
 
 @app.post('/api/library/scan')
 @access_required('admin')
