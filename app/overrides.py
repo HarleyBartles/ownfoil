@@ -279,8 +279,7 @@ def _generate_overrides_snapshot():
     """
     logger.info("Generating overrides snapshot...")
 
-    with titles_lib.identification_session("generate_overrides"):
-        titles_lib.load_titledb()
+    with titles_lib.titledb_session("generate_overrides"):
         # Query rows once
         rows = (
             db.session.query(AppOverrides)

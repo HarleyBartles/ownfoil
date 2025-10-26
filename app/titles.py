@@ -47,6 +47,17 @@ def identification_session(tag: str = ""):
         with _ident_lock:
             identification_in_progress_count -= 1
 
+@contextlib.contextmanager
+def titledb_session(tag: str = ""):
+    """Wrap TitleDB work in a scoped session that loads then unloads cleanly."""
+    loaded = False
+    with identification_session(tag):
+        load_titledb()
+        loaded = True
+        yield
+    if loaded:
+        unload_titledb()
+
 def get_dirs_and_files(path):
     entries = os.listdir(path)
     allFiles = []

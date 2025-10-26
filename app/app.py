@@ -479,16 +479,13 @@ def serve_game(id):
 @debounce(10)
 def post_library_change():
     with app.app_context():
-        with titles.identification_session("post_library_change"):
-            titles.load_titledb()
+        with titles.titledb_session("post_library_change"):
             process_library_identification(app)
             add_missing_apps_to_db()
             update_titles()  # Ensure titles are updated after identification
             # remove missing files
             remove_missing_files_from_db()
             process_library_organization(app, watcher) # Pass the watcher instance to skip organizer move/delete events
-            
-        titles.unload_titledb()
 
         # refresh caches after leaving the titledb session
         regenerate_all_caches()

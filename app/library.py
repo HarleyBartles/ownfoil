@@ -342,8 +342,7 @@ def identify_library_files(library):
     nb_to_identify = len(files_to_identify)
 
     # Load TitleDB once so we can check presence of title_ids quickly
-    titles_lib.load_titledb()
-    try:
+    with titles_lib.titledb_session("identify_library_files"):
         for n, file in enumerate(files_to_identify):
             try:
                 file_id = file.id
@@ -444,14 +443,8 @@ def identify_library_files(library):
         # Final commit for the batch
         db.session.commit()
 
-    finally:
-        # Keep titledb counters consistent and unload after a short debounce window
-        titles_lib.unload_titledb()
-
 def add_missing_apps_to_db():
     logger.info('Adding missing apps to database...')
-    titles_lib.load_titledb()
-
     apps_added = 0
     commit_every = 250
 
@@ -629,13 +622,11 @@ def add_missing_apps_to_db():
             db.session.commit()
         return added
 
-    try:
+    with titles_lib.titledb_session("add_missing_apps_to_db"):
         apps_added += _ensure_missing_base_apps()
         apps_added += _ensure_missing_update_apps()
         apps_added += _ensure_missing_dlc_apps()
         logger.info(f'Finished adding missing apps. Total apps added: {apps_added}')
-    finally:
-        titles_lib.unload_titledb()
 
 def process_library_identification(app):
     logger.info(f"Starting library identification process for all libraries...")
@@ -871,8 +862,7 @@ def _generate_library():
     """Generate the BASE/DLC library from Apps table and cache to disk."""
     logger.info('Generating library snapshot...')
 
-    with titles_lib.identification_session("generate_library"):
-        titles_lib.load_titledb()
+    with titles_lib.titledb_session("generate_library"):
         titles = get_all_apps(include_files=True)
         games_info = []
         processed_dlc_apps = set()  # Track processed DLC app_ids to avoid duplicates

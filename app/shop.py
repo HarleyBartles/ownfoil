@@ -50,8 +50,7 @@ def _generate_shop_snapshot():
     # Build only what Tinfoil needs
     logger.info("Generating shop snapshot...")
 
-    with titles_lib.identification_session("generate_shop"):
-        titles_lib.load_titledb()
+    with titles_lib.titledb_session("generate_shop"):
         files = _gen_shop_files()
         titledb_map = _build_titledb_from_overrides()
 
