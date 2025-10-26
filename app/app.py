@@ -460,12 +460,17 @@ def uploaded_icons(filename):
 @app.route('/api/titles', methods=['GET'])
 @access_required('shop')
 def get_all_titles_api():
-    titles_library = generate_library()
-
-    return jsonify({
+    titles_library, etag_hash = generate_library()
+    payload = {
         'total': len(titles_library),
         'games': titles_library
-    })
+    }
+
+    resp = jsonify(payload)
+    resp.set_etag(etag_hash)
+    resp.headers["Vary"] = "Authorization"
+    resp.headers["Cache-Control"] = "no-cache, private"
+    return resp.make_conditional(request)
 
 @app.route('/api/get_game/<int:id>')
 @tinfoil_access

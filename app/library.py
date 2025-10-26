@@ -834,17 +834,22 @@ def is_library_unchanged(saved_library):
 def generate_library():
     """
     Public entry-point for routes:
-
     - Load library from disk if unchanged,
-    - Apply corrected_title_id merges (non-destructive),
+    - Add a strong ETag derived from the snapshot's content identifiers (apps hash + TitleDB commit),
     - Return the list used by the API layer.
     """
     # Load library from disk or regenerate if hash changed
-    saved = load_or_generate_library()  # {'hash': ..., 'library': [...]}
-    if not saved or 'library' not in saved:
-        return []
+    saved = load_or_generate_library()  # {'hash': ..., 'titledb_commit': ..., 'library': [...]}
+    if not saved:
+        empty_etag = hashlib.sha256(b":").hexdigest()
+        return [], empty_etag
 
-    return saved['library']
+    library = saved.get('library') or []
+    payload_hash = saved.get('hash') or ""
+    titledb_commit = saved.get('titledb_commit') or ""
+    etag_source = f"{payload_hash}:{titledb_commit}".encode("utf-8")
+    etag = hashlib.sha256(etag_source).hexdigest()
+    return library, etag
 
 def load_or_generate_library():
     """
