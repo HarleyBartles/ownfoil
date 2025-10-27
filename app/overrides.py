@@ -1,10 +1,9 @@
-import hashlib
 import json
 import os
 
 import datetime
 from typing import Optional
-from flask import abort, Blueprint, request, jsonify, current_app
+from flask import abort, Blueprint, request, jsonify
 from sqlalchemy.orm import joinedload
 from werkzeug.exceptions import BadRequest, Conflict, NotFound
 
@@ -14,12 +13,20 @@ import titles as titles_lib
 from utils import *
 from images import *
 from constants import *
-from cache import invalidate_and_regenerate_cache
+from cache import (
+    compute_overrides_snapshot_hash,
+    regenerate_cache,
+    is_overrides_snapshot_current,
+)
 import logging
 logger = logging.getLogger('main')
 
 # --- api blueprint ---------------------------------------------------------
 overrides_blueprint = Blueprint("overrides_blueprint", __name__, url_prefix="/api/overrides")
+
+
+def _refresh_caches():
+    regenerate_cache(OVERRIDES_CACHE_FILE, SHOP_CACHE_FILE)
 
 # --- routes ----------------------------------------------------------------
 @overrides_blueprint.route("", methods=["GET"])
@@ -128,8 +135,7 @@ def create_override():
     db.session.add(ov)
     try:
         db.session.commit()
-        invalidate_and_regenerate_cache(OVERRIDES_CACHE_FILE)
-        invalidate_and_regenerate_cache(SHOP_CACHE_FILE)
+        _refresh_caches()
     except Exception:
         logger.error("Create override failed")
         db.session.rollback()
@@ -196,7 +202,7 @@ def update_override(oid: int):
     if banner_raw:
         ov.banner_path = save_art_from_bytes(ov.app.app_id, banner_raw, "banner")
     if icon_raw:
-        ov.icon_path  = save_art_from_bytes(ov.app.app_id, icon_raw, "icon")
+        ov.icon_path = save_art_from_bytes(ov.app.app_id, icon_raw, "icon")
 
     # Derive counterpart if missing
     if banner_raw and not ov.icon_path and not icon_remove:
@@ -208,8 +214,7 @@ def update_override(oid: int):
 
     try:
         db.session.commit()
-        invalidate_and_regenerate_cache(OVERRIDES_CACHE_FILE)
-        invalidate_and_regenerate_cache(SHOP_CACHE_FILE) 
+        _refresh_caches()
     except Exception:
         logger.error("Update override failed")
         db.session.rollback()
@@ -233,8 +238,7 @@ def delete_override(oid: int):
     try:
         db.session.delete(ov)
         db.session.commit()
-        invalidate_and_regenerate_cache(OVERRIDES_CACHE_FILE)
-        invalidate_and_regenerate_cache(SHOP_CACHE_FILE)
+        _refresh_caches()
     except Exception:
         logger.error("Delete override failed")
         db.session.rollback()
@@ -254,9 +258,7 @@ def load_or_generate_overrides_snapshot():
     Load from disk if hash unchanged, otherwise regenerate + save.
     """
     saved = load_json(OVERRIDES_CACHE_FILE)
-    current_hash = _current_overrides_hash()
-
-    if saved and isinstance(saved, dict) and saved.get("hash") == current_hash:
+    if saved and is_overrides_snapshot_current(saved):
         return saved
 
     # Cache missing or stale → regenerate
@@ -302,7 +304,7 @@ def _generate_overrides_snapshot():
                 "projection": projection,
             }
 
-        current_hash = _current_overrides_hash()
+        current_hash = compute_overrides_snapshot_hash()
         snapshot = {
             "hash": current_hash,
             "payload": {
@@ -313,52 +315,6 @@ def _generate_overrides_snapshot():
         save_json(snapshot, OVERRIDES_CACHE_FILE)
         logger.info("Generating overrides snapshot done.")
         return snapshot
-
-def _compute_overrides_fingerprint_rows():
-    """
-    Return a minimal, ordered list of tuples that reflect output-significant state
-    without heavy joins. Keep this cheap.
-    """
-    rows = (
-        db.session.query(
-            AppOverrides.id,
-            AppOverrides.updated_at,
-            AppOverrides.corrected_title_id,
-            AppOverrides.banner_path,
-            AppOverrides.icon_path,
-            AppOverrides.enabled,
-        )
-        .order_by(AppOverrides.id.asc())
-        .all()
-    )
-    # Normalize datetimes to ISO strings for stable hashing
-    norm = [
-        (
-            r[0],
-            (r[1].isoformat(timespec='seconds') if isinstance(r[1], datetime.datetime) else str(r[1])),
-            r[2] or None,
-            r[3] or None,
-            r[4] or None,
-            bool(r[5]),
-        )
-        for r in rows
-    ]
-    return norm
-
-def _current_overrides_hash():
-    """
-    Hash = sha256 of a JSON blob that includes:
-      - DB fingerprint rows (id, updated_at, corrected_title_id, artwork paths, enabled)
-      - TitleDB commit hash (so we regenerate if TitleDB updates)
-    """
-    titledb_commit = titles_lib.get_titledb_commit_hash()
-    payload_for_hash = {
-        "rows": _compute_overrides_fingerprint_rows(),
-        "titledb_commit": titledb_commit,
-    }
-    return hashlib.sha256(
-        json.dumps(payload_for_hash, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    ).hexdigest()
 
 def build_override_index(include_disabled: bool = False) -> dict:
     """

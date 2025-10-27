@@ -14,6 +14,7 @@ from sqlalchemy import or_
 from utils import *
 from settings import load_settings
 from db import update_file_path
+from cache import compute_library_apps_hash, is_library_snapshot_current
 
 def organize_file(file_obj, library_path, organizer_settings, watcher):
     try:
@@ -796,42 +797,7 @@ def update_titles():
             db.session.commit()
 
     db.session.commit()
-
-def compute_apps_hash():
-    """
-    Computes a hash of all Apps table content to detect changes in library state.
-    """
-    hash_md5 = hashlib.md5()
-    apps = get_all_apps()
-    
-    # Sort apps with safe handling of None values
-    for app in sorted(apps, key=lambda x: (x['app_id'] or '', x['app_version'] or '')):
-        hash_md5.update((app['app_id'] or '').encode())
-        hash_md5.update((app['app_version'] or '').encode())
-        hash_md5.update((app['app_type'] or '').encode())
-        hash_md5.update(str(app['owned'] or False).encode())
-        hash_md5.update((app['title_id'] or '').encode())
-    return hash_md5.hexdigest()
-
-def is_library_unchanged(saved_library):
-    if not saved_library or not saved_library.get('hash'):
-        return False
-
-    # Apps-table hash gate
-    if saved_library['hash'] != compute_apps_hash():
-        return False
-
-    # TitleDB commit gate
-    current_tdb = titles_lib.get_titledb_commit_hash() or ""
-    saved_tdb = saved_library.get('titledb_commit')
-
-    # Force one-time rebuild for old caches that lack the key
-    if saved_tdb is None:
-        return False
-
-    return saved_tdb == current_tdb
-
-def generate_library():
+def generate_library_snapshot():
     """
     Public entry-point for routes:
     - Load library from disk if unchanged,
@@ -839,7 +805,7 @@ def generate_library():
     - Return the list used by the API layer.
     """
     # Load library from disk or regenerate if hash changed
-    saved = load_or_generate_library()  # {'hash': ..., 'titledb_commit': ..., 'library': [...]}
+    saved = load_or_generate_library_snapshot()  # {'hash': ..., 'titledb_commit': ..., 'library': [...]}
     if not saved:
         empty_etag = hashlib.sha256(b":").hexdigest()
         return [], empty_etag
@@ -851,19 +817,21 @@ def generate_library():
     etag = hashlib.sha256(etag_source).hexdigest()
     return library, etag
 
-def load_or_generate_library():
+
+def load_or_generate_library_snapshot():
     """
     Load the BASE library (no overrides) from disk if hash unchanged.
     Otherwise, regenerate and save.
     """
     saved = load_json(LIBRARY_CACHE_FILE)
-    if saved and is_library_unchanged(saved):
+    if saved and is_library_snapshot_current(saved):
         return saved
 
     # Hash changed or cache missing/corrupt -> regenerate
-    return _generate_library()
+    return _generate_library_snapshot()
 
-def _generate_library():
+
+def _generate_library_snapshot():
     """Generate the BASE/DLC library from Apps table and cache to disk."""
     logger.info('Generating library snapshot...')
 
@@ -972,7 +940,7 @@ def _generate_library():
         _add_files_without_apps(games_info)
 
         library_data = {
-            'hash': compute_apps_hash(),
+            'hash': compute_library_apps_hash(),
             'titledb_commit': titles_lib.get_titledb_commit_hash() or "",
             'library': sorted(games_info, key=lambda x: (
                 "title_id_name" not in x,

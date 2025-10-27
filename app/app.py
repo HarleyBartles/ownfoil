@@ -1,5 +1,11 @@
-from flask import Flask, render_template, request, redirect, url_for, jsonify, send_from_directory, Response
-from flask_login import LoginManager
+from flask import (
+    Flask,
+    render_template,
+    request,
+    jsonify,
+    send_from_directory,
+    Response
+)
 from scheduler import init_scheduler
 from functools import wraps
 from file_watcher import Watcher
@@ -7,9 +13,7 @@ import threading
 import logging
 import sys
 import copy
-import flask.cli
-from datetime import timedelta
-flask.cli.show_server_banner = lambda *args: None
+import datetime
 from constants import *
 from settings import *
 from db import *
@@ -69,10 +73,10 @@ def init():
                 logger.info("Skipping scheduled library scan: update_titledb job is currently in progress. Rescheduling in 5 minutes.")
                 # Reschedule the job for 5 minutes later
                 app.scheduler.add_job(
-                    job_id=f'scan_library_rescheduled_{datetime.now().timestamp()}', # Unique ID
+                    job_id=f'scan_library_rescheduled_{datetime.datetime.now().timestamp()}', # Unique ID
                     func=scan_library_job,
                     run_once=True,
-                    start_date=datetime.now().replace(microsecond=0) + timedelta(minutes=5)
+                    start_date=datetime.datetime.now().replace(microsecond=0) + datetime.timedelta(minutes=5)
                 )
                 return
         logger.info("Starting scheduled library scan job...")
@@ -103,7 +107,7 @@ def init():
     app.scheduler.add_job(
         job_id='update_db_and_scan',
         func=update_db_and_scan_job,
-        interval=timedelta(hours=2),
+        interval=datetime.timedelta(hours=2),
         run_first=True
     )
 
@@ -368,9 +372,21 @@ def get_settings_api():
 @app.post('/api/settings/titles')
 @access_required('admin')
 def set_titles_settings_api():
-    settings = request.json
-    region = settings['region']
-    language = settings['language']
+    settings_payload = request.get_json(silent=True) or {}
+    region = settings_payload.get('region')
+    language = settings_payload.get('language')
+    if isinstance(region, str):
+        region = region.strip()
+    if isinstance(language, str):
+        language = language.strip()
+    if not region or not language:
+        return jsonify({
+            'success': False,
+            'errors': [{
+                'path': 'titles',
+                'error': "Both 'region' and 'language' are required."
+            }]
+        }), 400
     with open(os.path.join(TITLEDB_DIR, 'languages.json')) as f:
         languages = json.load(f)
         languages = dict(sorted(languages.items()))
@@ -397,8 +413,10 @@ def set_titles_settings_api():
 
 @app.post('/api/settings/shop')
 def set_shop_settings_api():
-    data = request.json
-    set_shop_settings(data)
+    payload = request.get_json(silent=True)
+    if payload is None:
+        return jsonify({'success': False, 'errors': ['Request body must be JSON']}), 400
+    set_shop_settings(payload)
     reload_conf()
     resp = {
         'success': True,
@@ -411,8 +429,11 @@ def set_shop_settings_api():
 def library_paths_api():
     global watcher
     if request.method == 'POST':
-        data = request.json
-        success, errors = add_library_complete(app, watcher, data['path'])
+        payload = request.get_json(silent=True) or {}
+        path = payload.get('path')
+        if not path:
+            return jsonify({'success': False, 'errors': ['Library path is required']}), 400
+        success, errors = add_library_complete(app, watcher, path)
         if success:
             reload_conf()
             post_library_change()
@@ -428,8 +449,11 @@ def library_paths_api():
             'paths': app_settings['library']['paths']
         }    
     elif request.method == 'DELETE':
-        data = request.json
-        success, errors = remove_library_complete(app, watcher, data['path'])
+        payload = request.get_json(silent=True) or {}
+        path = payload.get('path')
+        if not path:
+            return jsonify({'success': False, 'errors': ['Library path is required']}), 400
+        success, errors = remove_library_complete(app, watcher, path)
         if success:
             reload_conf()
             post_library_change()
@@ -442,8 +466,10 @@ def library_paths_api():
 @app.post('/api/settings/library/management')
 @access_required('admin')
 def set_library_management_settings_api():
-    data = request.json
-    set_library_management_settings(data)
+    payload = request.get_json(silent=True)
+    if payload is None:
+        return jsonify({'success': False, 'errors': ['Request body must be JSON']}), 400
+    set_library_management_settings(payload)
     reload_conf()
     post_library_change()
     resp = {
@@ -491,7 +517,7 @@ def uploaded_icons(filename):
 @app.route('/api/titles', methods=['GET'])
 @access_required('shop')
 def get_all_titles_api():
-    titles_library, etag_hash = generate_library()
+    titles_library, etag_hash = generate_library_snapshot()
     payload = {
         'total': len(titles_library),
         'games': titles_library
@@ -530,8 +556,10 @@ def post_library_change():
 @app.post('/api/library/scan')
 @access_required('admin')
 def scan_library_api():
-    data = request.json
-    path = data['path']
+    payload = request.get_json(silent=True) or {}
+    path = payload.get('path') if payload else None
+    if isinstance(path, str) and not path.strip():
+        path = None
     success = True
     errors = []
 

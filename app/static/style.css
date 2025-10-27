@@ -241,6 +241,7 @@ p.game-description {
 
 #paginationControls .page-jump .page-jump-group {
     max-width: 150px;
+    height: 100%;
 }
 
 #paginationControls .page-jump input {
