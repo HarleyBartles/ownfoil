@@ -169,6 +169,7 @@
 
 <script>
     const isAdminUser = (window.IS_ADMIN === true || window.IS_ADMIN === 'true');
+    const Overrides = window.Ownfoil?.Overrides || null;
 
     let games = [];
     let filteredGames = [];
@@ -206,7 +207,7 @@
                     }
 
                     // compute & attach client flags (invariant to overrides)
-                    const flags = window.Overrides.computeRecognitionFlags(clone);
+                    const flags = Overrides?.computeRecognitionFlags(clone) || { isUnrecognized: true, hasTitleDb: false };
                     clone.isUnrecognized = flags.isUnrecognized;
                     clone.hasTitleDb = flags.hasTitleDb;
                     return clone;
@@ -282,8 +283,9 @@
                 .attr('data-file-basename', game.file_basename || '')
                 .attr('data-identification-type', (game.identification_type || '').toLowerCase());
 
+            const bannerSrc = Overrides?.bannerUrlFor?.(game) || window.DEFAULT_BANNER;
             const img = $('<img class="card-img">')
-                .attr('src', window.Overrides.bannerUrlFor(game))
+                .attr('src', bannerSrc)
                 .on('error', function () {
                     if (this.src !== window.DEFAULT_BANNER) this.src = window.DEFAULT_BANNER;
                 });
@@ -292,7 +294,7 @@
             const cardOverlay = $('<div class="card-img-overlay game-info"></div>');
 
             const titleLine = $('<div class="d-flex align-items-center justify-content-between"></div>');
-            const bigTitle = window.Overrides.displayTitleFor(game, games);
+            const bigTitle = Overrides?.displayTitleFor?.(game, games) || game.name || '';
             const title = $('<h5 class="card-title game-title mb-1"></h5>').text(bigTitle);
             titleLine.append(title);
             cardOverlay.append(titleLine);
@@ -302,7 +304,7 @@
                 let dlcName = (game.name || '').trim();
 
                 // derive base name used in the header
-                const baseName = window.Overrides.displayTitleFor(game, games).trim();
+                const baseName = (Overrides?.displayTitleFor?.(game, games) || '').trim();
 
                 if (baseName && dlcName.toLowerCase().startsWith(baseName.toLowerCase())) {
                     dlcName = dlcName.slice(baseName.length).replace(/^(\s*[-–:]\s*)?/, '');
@@ -314,10 +316,9 @@
             }
 
             // Prefer corrected → app_id (app-specific) → dlc_title_id → title_id → id
-            const tidToShow = (window.Overrides.pickTidForDisplay
-                ? window.Overrides.pickTidForDisplay(game, window.Overrides.getOverrideForGame?.(game))
-                : (game.corrected_title_id || game.app_id || game.dlc_title_id || game.title_id || game.id || '')
-            ).toString().trim().toUpperCase();
+            const fallbackTid = game.corrected_title_id || game.app_id || game.dlc_title_id || game.title_id || game.id || '';
+            const rawTid = Overrides?.pickTidForDisplay?.(game, Overrides?.getOverrideForGame?.(game)) ?? fallbackTid ?? '';
+            const tidToShow = rawTid.toString().trim().toUpperCase();
 
             const smallId = $('<small></small>').text(tidToShow);
 
@@ -374,12 +375,12 @@
 
             // Override edit pill
             if (isAdminUser) {
-                const hasOvr = window.Overrides.hasActiveOverride(game);
+                const hasOvr = Overrides?.hasActiveOverride?.(game) === true;
                 const editPill = $('<button type="button" class="override-pill btn rounded-pill game-tag"></button>')
                     .addClass(hasOvr ? 'btn-success' : 'btn-secondary')
                     .attr('title', hasOvr ? 'Metadata override active. Click to edit.' : 'No override. Click to edit metadata.')
                     .html('<i class="bi bi-pencil-square"></i>')
-                    .on('click', () => window.Overrides.openOverrideEditor(game));
+                    .on('click', () => Overrides?.openOverrideEditor?.(game));
                 tagsContainer.append(editPill);
             }
             
@@ -422,8 +423,9 @@
         const paginatedGames = baseGames.slice(start, end);
 
         paginatedGames.forEach(game => {
+            const iconSrc = Overrides?.iconUrlFor?.(game) || window.DEFAULT_ICON;
             const icon = $('<img class="game-icon">')
-                .attr('src', window.Overrides.iconUrlFor(game))
+                .attr('src', iconSrc)
                 .on('error', function () {
                     if (this.src !== window.DEFAULT_ICON) this.src = window.DEFAULT_ICON;
                 });
@@ -616,10 +618,10 @@
             }
 
             if (activeSpecialFilters.has("Unrecognized")) {
-                gamesFilteredBySpecial = gamesFilteredBySpecial.concat(games.filter(game => window.Overrides.isUnrecognizedGame(game)));
+                if (Overrides?.isUnrecognizedGame) gamesFilteredBySpecial = gamesFilteredBySpecial.concat(games.filter(game => Overrides.isUnrecognizedGame(game)));
             }
             if (activeSpecialFilters.has("Overridden")) {
-                gamesFilteredBySpecial = gamesFilteredBySpecial.concat(games.filter(game => window.Overrides.hasActiveOverride(game)));
+                if (Overrides?.hasActiveOverride) gamesFilteredBySpecial = gamesFilteredBySpecial.concat(games.filter(game => Overrides.hasActiveOverride(game)));
             }
 
             // Base (non-text) filtered list
@@ -648,9 +650,7 @@
 
         return src.filter(game => {
             // computed header = base title for DLC, or TitleDB name for BASE
-            const computedHeader = (window.Overrides?.displayTitleFor)
-                ? (window.Overrides.displayTitleFor(game, games) || '')
-                : (game.title_id_name || '');
+            const computedHeader = Overrides?.displayTitleFor?.(game, games) || (game.title_id_name || '');
 
             // combine header + app/DLC name (helps full dlc name queries like "A Hat in Time Seal the Deal")
             const headerPlusName = `${computedHeader} ${game.name || ''}`.trim();
@@ -672,7 +672,7 @@
     }
 
     $(document).ready(function () {
-        const overridesModule = window.Overrides || null;
+        const overridesModule = Overrides;
 
         // Bind overrides module to our environment
         if (overridesModule?.bindEnvironment) {
