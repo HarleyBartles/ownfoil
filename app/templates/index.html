@@ -162,7 +162,7 @@
 </div>
 
 {% if current_user.is_authenticated and current_user.is_admin %}
-  {% include 'override_editor_modal.html' %}
+  {% include 'override_modal.html' %}
 {% endif %}
 <script src="{{ url_for('static', filename='js/overrides.js') }}"></script>
 
