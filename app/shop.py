@@ -191,28 +191,66 @@ def _build_titledb_from_overrides():
     def _version_to_int(v):
         return _version_str_to_int(v)
 
+    def _first_value(*values):
+        """
+        Return the first non-empty/non-null value, preserving the original text.
+        """
+        for v in values:
+            if v is None:
+                continue
+            if isinstance(v, str):
+                if v.strip():
+                    return v
+            else:
+                return v
+        return None
+
     # Try to pull from the cached overrides snapshot if available
     overrides_by_app = {}
+    redirect_meta_by_app = {}
     try:
         snap = load_or_generate_overrides_snapshot()
-        items = (snap or {}).get("payload", {}).get("items", []) or []
+        payload = (snap or {}).get("payload", {}) or {}
+        items = payload.get("items", []) or []
+        redirects_payload = payload.get("redirects", {}) or {}
+
+        for raw_app_id, redirect_info in redirects_payload.items():
+            app_id = (raw_app_id or "").strip().upper()
+            if not app_id or not isinstance(redirect_info, dict):
+                continue
+            corr = redirect_info.get("corrected_title_id") or redirect_info.get("correctedTitleId")
+            corr = (corr or "").strip().upper() or None
+            projection = redirect_info.get("projection") if isinstance(redirect_info.get("projection"), dict) else {}
+            redirect_meta_by_app[app_id] = {
+                "corrected_title_id": corr,
+                "projection": projection,
+            }
+
         for it in items:
             if it.get("enabled") is False:
                 continue
-            app_id = it.get("app_id", "").strip().upper()
+            app_id = (it.get("app_id") or "").strip().upper()
             if not app_id:
                 continue
             overrides_by_app[app_id] = {
-                "corrected_title_id": (it.get("corrected_title_id") or it.get("correctedTitleId") or None),
+                "corrected_title_id": _first_value(
+                    it.get("corrected_title_id"),
+                    it.get("correctedTitleId"),
+                    redirect_meta_by_app.get(app_id, {}).get("corrected_title_id"),
+                ),
                 "name": it.get("name"),
                 "version": it.get("version"),
                 "region": it.get("region"),
-                "release_date": it.get("release_date") or it.get("releaseDate"),
+                "release_date": _first_value(it.get("release_date"), it.get("releaseDate")),
                 "description": it.get("description"),
+                "bannerUrl": _first_value(it.get("bannerUrl"), it.get("banner_path")),
+                "iconUrl": _first_value(it.get("iconUrl"), it.get("icon_path")),
+                "category": it.get("category"),
             }
     except Exception:
         # Snapshot unavailable/corrupt; we'll fall back
         overrides_by_app = {}
+        redirect_meta_by_app = {}
 
     # Fallback (or augment) from the lightweight index if needed
     if not overrides_by_app:
@@ -228,7 +266,25 @@ def _build_titledb_from_overrides():
                 "region": ov.get("region"),
                 "release_date": ov.get("release_date"),
                 "description": ov.get("description"),
+                "bannerUrl": ov.get("banner_path"),
+                "iconUrl": ov.get("icon_path"),
+                "category": ov.get("category"),
             }
+            corr = (ov.get("corrected_title_id") or "").strip().upper()
+            if corr:
+                info = titles_lib.get_game_info(corr) or {}
+                redirect_meta_by_app[app_id_u] = {
+                    "corrected_title_id": corr,
+                    "projection": {
+                        "name": (info.get("name") or "").strip() or None,
+                        "description": info.get("description"),
+                        "region": info.get("region"),
+                        "release_date": info.get("release_date"),
+                        "bannerUrl": info.get("bannerUrl"),
+                        "iconUrl": info.get("iconUrl"),
+                        "category": info.get("category"),
+                    },
+                }
 
     if not overrides_by_app:
         return {}
@@ -278,7 +334,12 @@ def _build_titledb_from_overrides():
             # Unknown type; skip to avoid guessing
             continue
 
-        corr_tid = (ov.get("corrected_title_id") or "").strip().upper() or None
+        redirect_meta = redirect_meta_by_app.get(app_id_u, {})
+        corr_tid = _first_value(
+            (ov.get("corrected_title_id") or None),
+            redirect_meta.get("corrected_title_id"),
+        )
+        corr_tid = (corr_tid or "").strip().upper() or None
 
         if app_type == titles_lib.APP_TYPE_BASE:
             # BASE → prefer corrected_title_id, else Titles.title_id, else app_id as last resort
@@ -290,31 +351,61 @@ def _build_titledb_from_overrides():
         if not tid_emit:
             continue
 
+        projection = redirect_meta.get("projection") if isinstance(redirect_meta.get("projection"), dict) else {}
+
         entry = {"id": tid_emit}
 
         # Optional overridden fields
-        if ov.get("name"):
-            entry["name"] = ov["name"]
+        name = _first_value(ov.get("name"), projection.get("name"))
+        if name:
+            entry["name"] = name
 
-        vnum = _version_to_int(ov.get("version"))
+        vnum = _version_to_int(_first_value(ov.get("version"), projection.get("version")))
         if vnum is not None:
             entry["version"] = vnum
 
-        if ov.get("region"):
-            entry["region"] = ov["region"]
+        region = _first_value(ov.get("region"), projection.get("region"))
+        if region:
+            entry["region"] = region
 
-        rd_int = _yyyymmdd_int(ov.get("release_date"))
+        rd_int = _yyyymmdd_int(_first_value(ov.get("release_date"), projection.get("release_date")))
         if rd_int:
             entry["releaseDate"] = rd_int
 
-        if ov.get("description"):
-            entry["description"] = ov["description"]
+        description = _first_value(ov.get("description"), projection.get("description"))
+        if description:
+            entry["description"] = description
+
+        banner_url = _first_value(ov.get("bannerUrl"), projection.get("bannerUrl"))
+        if banner_url:
+            entry["bannerUrl"] = banner_url
+
+        icon_url = _first_value(ov.get("iconUrl"), projection.get("iconUrl"))
+        if icon_url:
+            entry["iconUrl"] = icon_url
+
+        category = _first_value(ov.get("category"), projection.get("category"))
+        if category:
+            entry["category"] = category
 
         total_bytes = sizes_by_app.get(app_id_u, 0)
         if total_bytes:
             entry["size"] = total_bytes
 
         titledb_map[tid_emit] = entry  # last-writer wins if collisions
+
+        # Also publish metadata keyed by the original (non-redirected) TitleID so
+        # Tinfoil can resolve installed titles that retain their original IDs.
+        if corr_tid:
+            if app_type == titles_lib.APP_TYPE_BASE:
+                source_tid = (base_tid or app_id_u or "").strip().upper()
+            else:
+                source_tid = app_id_u  # DLC original id is its app_id
+            source_tid = (source_tid or "").strip().upper()
+            if source_tid and source_tid != tid_emit:
+                source_entry = dict(entry)
+                source_entry["id"] = source_tid
+                titledb_map[source_tid] = source_entry
 
     return titledb_map
 
