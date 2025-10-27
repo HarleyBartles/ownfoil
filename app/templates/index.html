@@ -161,147 +161,14 @@
     </nav>
 </div>
 
-<!-- Override Editor Modal -->
-<div id="overrideEditorModal" class="modal fade" tabindex="-1" aria-hidden="true">
-  <div class="modal-dialog modal-dialog-centered" style="max-width:520px;">
-    <div class="modal-content bg-dark text-light">
-      <div class="modal-header">
-        <h5 class="modal-title">Edit Override: <span id="ovr-file-name"></span></h5>
-        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
-      </div>
-      <div class="modal-body">
-        <input type="hidden" id="ovr-id">
-        <input type="hidden" id="ovr-app-id">
-
-        <!-- Title ID (inline display with click-to-edit) -->
-        <div class="mb-2" id="ovTitleIdRow">
-            <label class="form-label me-2 mb-0">Title ID</label>
-            <span id="ovTitleIdDisplay" class="text-monospace me-2"></span>
-            <button type="button" id="ovTitleIdEditBtn" class="btn btn-sm btn-outline-secondary">
-                Click to edit
-            </button>
-
-            <!-- Hidden edit row; appears only when editing -->
-            <div id="ovTitleIdEditRow" class="mt-2 d-none">
-                <div class="input-group">
-                <input
-                    id="ovCorrectedTitleId"
-                    type="text"
-                    class="form-control"
-                    placeholder="e.g. 01009EA00B714000"
-                    maxlength="18"
-                    inputmode="text"
-                    autocomplete="off"
-                    spellcheck="false"
-                >
-                <button type="button" id="ovTitleIdCancelBtn" class="btn btn-outline-secondary">
-                    Cancel
-                </button>
-                </div>
-                <div class="form-text">
-                16 hex chars (0x prefix allowed). Used to pull metadata from TitleDB.
-                </div>
-            </div>
-        </div>
-
-        <div class="mb-2">
-          <label class="form-label">Name</label>
-          <input id="ovr-name" type="text" class="form-control" placeholder="Title name">
-          <div class="form-text">Leave empty to reset to TitleDB name.</div>
-        </div>
-        <div class="mb-2">
-          <label for="ov-release-date" class="form-label">Release date</label>
-            <!-- Disable manual typing/pasting to ensure consistent format -->
-            <input
-              type="date"
-              class="form-control"
-              id="ov-release-date"
-              name="release_date"
-              placeholder="yyyy-MM-dd"
-              inputmode="numeric"
-              pattern="\d{4}-\d{2}-\d{2}"
-              onkeydown="return false"
-              onpaste="return false"
-            />
-          <div class="form-text">Click or tap to select a date</div>
-        </div>
-        <div class="mb-2">
-          <label class="form-label">Region</label>
-          <input id="ovr-region" type="text" class="form-control" placeholder="US, EU, JP, ...">
-        </div>
-        <div class="mb-2">
-          <label class="form-label">Description</label>
-          <textarea id="ovr-description" class="form-control" rows="3" placeholder="Description"></textarea>
-        </div>
-        <div class="mb-2">
-          <label class="form-label">Version</label>
-          <input id="ovr-version" type="number" class="form-control" placeholder="e.g. 10000">
-        </div>
-
-        <!-- Artwork (previews-only + hidden file inputs) -->
-        <div class="mb-2">
-            <label class="form-label d-block">Artwork</label>
-
-            <!-- hidden file inputs (triggered by the edit buttons) -->
-            <input id="ovr-banner-file" type="file" class="visually-hidden" accept=".jpg,.jpeg,.png,.webp">
-            <input id="ovr-icon-file"   type="file" class="visually-hidden" accept=".jpg,.jpeg,.png,.webp">
-
-            <div class="ovr-preview-grid">
-                <!-- Banner preview -->
-                <div class="ovr-preview-wrap" id="ovr-banner-preview" data-kind="banner">
-                  <img id="ovr-banner-preview-img" src="" alt="Banner preview" class="ovr-preview-banner rounded border"
-                        onerror="if(this.src!==window.DEFAULT_BANNER)this.src=window.DEFAULT_BANNER;">
-                  <!-- remove (top-left) -->
-                  <button type="button" class="ovr-remove-x" id="ovr-banner-remove"
-                          title="Remove overridden banner" aria-label="Remove overridden banner">×</button>
-                  <!-- edit (top-right) -->
-                  <button type="button" class="ovr-edit-btn" id="ovr-banner-edit"
-                          title="Choose banner image" aria-label="Choose banner image">
-                      <i class="bi bi-pencil-square"></i>
-                  </button>
-                  <div class="ovr-caption">Banner (400×225)</div>
-                </div>
-
-                <!-- Icon preview -->
-                <div class="ovr-preview-wrap" id="ovr-icon-preview" data-kind="icon">
-                  <img id="ovr-icon-preview-img" src="" alt="Icon preview" class="ovr-preview-icon rounded border"
-                        onerror="if(this.src!==window.DEFAULT_ICON)this.src=window.DEFAULT_ICON;">
-                  <!-- remove (top-left) -->
-                  <button type="button" class="ovr-remove-x" id="ovr-icon-remove"
-                          title="Remove overridden icon" aria-label="Remove overridden icon">×</button>
-                  <!-- edit (top-right) -->
-                  <button type="button" class="ovr-edit-btn" id="ovr-icon-edit"
-                          title="Choose icon image" aria-label="Choose icon image">
-                      <i class="bi bi-pencil-square"></i>
-                  </button>
-                  <div class="ovr-caption">Icon (400×400)</div>
-                </div>
-            </div>
-
-            <div class="form-text mt-1">
-                Drag & drop images onto the previews, or click the pencil to choose files.
-            </div>
-        </div>
-        <!-- /Artwork -->
-
-      </div>
-      <div class="modal-footer justify-content-between">
-        <div class="d-flex gap-2">
-          <button id="btn-reset-override" type="button" class="btn btn-danger" style="display:none;">Reset override</button>
-        </div>
-        <div>
-          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-          <button id="btn-save-override" type="button" class="btn btn-primary">Save</button>
-        </div>
-      </div>
-    </div>
-  </div>
-</div>
-
-<!-- Load overrides logic as a global helper first -->
+{% if current_user.is_authenticated and current_user.is_admin %}
+  {% include 'override_editor_modal.html' %}
+{% endif %}
 <script src="{{ url_for('static', filename='js/overrides.js') }}"></script>
 
 <script>
+    const isAdminUser = (window.IS_ADMIN === true || window.IS_ADMIN === 'true');
+
     let games = [];
     let filteredGames = [];
     let baseFilteredGames = [];
@@ -498,7 +365,7 @@
             }
 
             // Override edit pill
-            if (window.IS_ADMIN === true || window.IS_ADMIN === 'true') {
+            if (isAdminUser) {
                 const hasOvr = window.Overrides.hasActiveOverride(game);
                 const editPill = $('<button type="button" class="override-pill btn rounded-pill game-tag"></button>')
                     .addClass(hasOvr ? 'btn-success' : 'btn-secondary')
@@ -833,12 +700,18 @@
     }
 
     $(document).ready(function () {
+        const overridesModule = window.Overrides || null;
+
         // Bind overrides module to our environment
-        window.Overrides.bindEnvironment({
-            getGames: () => games,
-            applyFilters: () => applyFilters()
-        });
-        window.Overrides.initDomBindings();
+        if (overridesModule?.bindEnvironment) {
+            overridesModule.bindEnvironment({
+                getGames: () => games,
+                applyFilters: () => applyFilters()
+            });
+        }
+        if (overridesModule?.initDomBindings) {
+            overridesModule.initDomBindings();
+        }
 
         const savedItemsPerPage = localStorage.getItem('itemsPerPage');
         if (savedItemsPerPage) itemsPerPage = parseInt(savedItemsPerPage);
@@ -849,15 +722,19 @@
         const savedCardSize = localStorage.getItem('cardSize');
         if (savedCardSize) cardSize = parseInt(savedCardSize);
 
-        // Fetch overrides + games, then apply redirects BEFORE explicit overrides
-        Promise.all([window.Overrides.fetchOverrides(), fetchGames()])
+        // Fetch overrides for everyone, then fetch games and fold in redirect/projection data before applying explicit overrides
+        const overridesPromise = (overridesModule?.fetchOverrides)
+            ? overridesModule.fetchOverrides()
+            : Promise.resolve(null);
+
+        Promise.all([overridesPromise, fetchGames()])
             .then(([ovFlags]) => {
                 // Only do work when needed
-                if (ovFlags?.redirectsChanged) {
-                    window.Overrides.applyRedirectsToGames(games);
+                if (ovFlags?.redirectsChanged && overridesModule?.applyRedirectsToGames) {
+                    overridesModule.applyRedirectsToGames(games);
                 }
-                if (ovFlags?.overridesChanged) {
-                    window.Overrides.reapplyAllOverridesToGames(games);
+                if (ovFlags?.overridesChanged && overridesModule?.reapplyAllOverridesToGames) {
+                    overridesModule.reapplyAllOverridesToGames(games);
                 }
                 loadFiltersFromStorage();
             })

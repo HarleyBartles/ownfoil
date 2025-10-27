@@ -27,7 +27,10 @@
   };
 
   const overrideEl = document.getElementById('overrideEditorModal');
-  const overrideModal = () => bootstrap.Modal.getOrCreateInstance(overrideEl);
+  const overrideModal = () => {
+    if (!overrideEl) return null;
+    return bootstrap.Modal.getOrCreateInstance(overrideEl);
+  };
 
   // ----------------- Helpers -----------------
   const _trimmedOrNull = (u) => (typeof u === 'string' && u.trim().length) ? u.trim() : null;
@@ -568,13 +571,19 @@
       $('#ovr-icon-remove').toggle(!!ovrIcon);
     }
 
-    overrideModal().show();
+    const modalInstance = overrideModal();
+    if (modalInstance) {
+      modalInstance.show();
+    }
   }
 
   const finishOverrideMutationAndRefresh = (modifiedKey) => {
     if (env.getGames) applyOverrideToGamesByKey(modifiedKey, env.getGames());
     if (env.applyFilters) env.applyFilters();
-    overrideModal().hide();
+    const modalInstance = overrideModal();
+    if (modalInstance) {
+      modalInstance.hide();
+    }
   }
 
   const saveOverride = async () => {
