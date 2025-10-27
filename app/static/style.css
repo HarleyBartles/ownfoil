@@ -215,3 +215,46 @@ p.game-description {
 }
 
 #ovTitleIdDisplay { user-select: text; }
+
+/* Pagination controls */
+#paginationControls {
+    flex-wrap: wrap;
+    gap: .35rem;
+}
+
+#paginationControls .page-item {
+    margin: 0;
+}
+
+#paginationControls .page-link {
+    min-width: 2.25rem;
+    text-align: center;
+}
+
+#paginationControls .page-ellipsis .page-link {
+    pointer-events: none;
+}
+
+#paginationControls .page-jump {
+    align-self: stretch;
+}
+
+#paginationControls .page-jump .page-jump-group {
+    max-width: 150px;
+}
+
+#paginationControls .page-jump input {
+    min-width: 0;
+}
+
+@media (max-width: 576px) {
+    #paginationControls .page-jump {
+        flex: 1 0 100%;
+        margin-left: 0 !important;
+    }
+
+    #paginationControls .page-jump .page-jump-group {
+        max-width: none;
+        width: 100%;
+    }
+}

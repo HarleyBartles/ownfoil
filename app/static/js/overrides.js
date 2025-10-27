@@ -1,7 +1,15 @@
-// Global helper for Overrides functionality.
-// Attaches as window.Overrides (no module build needed).
+'use strict';
 
-(() => {
+// Global helper for Overrides functionality.
+// Attaches as window.Ownfoil.Overrides and requires jQuery.
+
+((global, $) => {
+  if (!$) {
+    console.warn('Ownfoil Overrides requires jQuery.');
+    return;
+  }
+
+  const namespace = global.Ownfoil = global.Ownfoil || {};
   const PLACEHOLDER_TEXT = () => window.PLACEHOLDER_TEXT || "Image Unavailable";
   const DEFAULT_BANNER = () => window.DEFAULT_BANNER || `https://placehold.co/400x225/png?text=${encodeURIComponent(PLACEHOLDER_TEXT())}`;
   const DEFAULT_ICON   = () => window.DEFAULT_ICON   || `https://placehold.co/400x400/png?text=${encodeURIComponent(PLACEHOLDER_TEXT())}`;
@@ -26,10 +34,11 @@
     applyFilters: null   // () => void
   };
 
-  const overrideEl = document.getElementById('overrideEditorModal');
+  const $overrideModalEl = $('#overrideEditorModal');
   const overrideModal = () => {
-    if (!overrideEl) return null;
-    return bootstrap.Modal.getOrCreateInstance(overrideEl);
+    const el = $overrideModalEl.get(0);
+    if (!el) return null;
+    return bootstrap.Modal.getOrCreateInstance(el);
   };
 
   // ----------------- Helpers -----------------
@@ -987,7 +996,7 @@
   }
 
   // ----------------- Public API -----------------
-  window.Overrides = {
+  const overridesApi = {
     // wiring
     bindEnvironment(opts = {}) {
       env.getGames = opts.getGames || null;
@@ -1015,4 +1024,5 @@
     applyRedirectToGame,
     applyRedirectsToGames,
   };
-})();
+  namespace.Overrides = overridesApi;
+})(window, window.jQuery);

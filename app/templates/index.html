@@ -165,6 +165,7 @@
   {% include 'override_modal.html' %}
 {% endif %}
 <script src="{{ url_for('static', filename='js/overrides.js') }}"></script>
+<script src="{{ url_for('static', filename='js/pagination.js') }}"></script>
 
 <script>
     const isAdminUser = (window.IS_ADMIN === true || window.IS_ADMIN === 'true');
@@ -177,6 +178,7 @@
     let totalGames = 0;
     let cardSize = 3; // Default card size
     let currentView = 'card'; // Default view is 'card'
+    let paginationController = null;
 
     // --- Search debounce ---
     const SEARCH_DEBOUNCE_MS = 300;
@@ -260,6 +262,12 @@
             updatePaginationControls(0);
             return;
         }
+
+        // Keep the current page within bounds for the available results
+        const totalItems = filteredGames.length;
+        const totalPages = Math.max(1, Math.ceil(totalItems / itemsPerPage));
+        if (currentPage > totalPages) currentPage = totalPages;
+        if (currentPage < 1) currentPage = 1;
 
         // Get games for the current page
         const start = (currentPage - 1) * itemsPerPage;
@@ -401,10 +409,16 @@
             return;
         }
 
+        // Only paginate base titles in icon view
+        const baseGames = filteredGames.filter(game => game.app_type === 'BASE');
+        const totalIconItems = baseGames.length;
+        const totalIconPages = Math.max(1, Math.ceil(totalIconItems / itemsPerPage));
+        if (currentPage > totalIconPages) currentPage = totalIconPages;
+        if (currentPage < 1) currentPage = 1;
+
         // Get games for the current page
         const start = (currentPage - 1) * itemsPerPage;
         const end = start + itemsPerPage;
-        const baseGames = filteredGames.filter(game => game.app_type === 'BASE');
         const paginatedGames = baseGames.slice(start, end);
 
         paginatedGames.forEach(game => {
@@ -419,7 +433,7 @@
         // Adjust icon sizes based on the slider value
         adjustIconSizes();
         // Update pagination
-        updatePaginationControls(baseGames.length);
+        updatePaginationControls(totalIconItems);
     }
 
     function getColumnsForCardSize(size) {
@@ -434,49 +448,7 @@
     }
 
     function updatePaginationControls(nbDisplayedGames) {
-        const paginationControls = $('#paginationControls');
-        paginationControls.empty(); // Clear existing pagination
-
-        const totalPages = Math.max(1, Math.ceil(nbDisplayedGames / itemsPerPage));
-
-        // Previous button
-        const prevButton = $('<li class="page-item"></li>').addClass(`${currentPage === 1 ? 'disabled' : ''}`).html(`
-                <a class="page-link" href="#" aria-label="Previous">
-                    <span aria-hidden="true">&laquo;</span>
-                </a>`);
-        prevButton.click(function (e) {
-            e.preventDefault();
-            if (currentPage > 1) {
-                currentPage--;
-                renderGames();
-            }
-        });
-        paginationControls.append(prevButton);
-
-        // Page numbers
-        for (let i = 1; i <= totalPages; i++) {
-            const pageButton = $('<li class="page-item"></li>').addClass(`${i === currentPage ? 'active' : ''}`).html(`<a class="page-link" href="#">${i}</a>`);
-            pageButton.click(function (e) {
-                e.preventDefault();
-                currentPage = i;
-                renderGames();
-            });
-            paginationControls.append(pageButton);
-        }
-
-        // Next button
-        const nextButton = $('<li class="page-item"></li>').addClass(`${currentPage === totalPages ? 'disabled' : ''}`).html(`
-                <a class="page-link" href="#" aria-label="Next">
-                    <span aria-hidden="true">&raquo;</span>
-                </a>`);
-        nextButton.click(function (e) {
-            e.preventDefault();
-            if (currentPage < totalPages) {
-                currentPage++;
-                renderGames();
-            }
-        });
-        paginationControls.append(nextButton);
+        paginationController?.update(nbDisplayedGames);
     }
 
     function adjustCardSizes() {
@@ -721,6 +693,14 @@
 
         const savedCardSize = localStorage.getItem('cardSize');
         if (savedCardSize) cardSize = parseInt(savedCardSize);
+
+        paginationController = window.Ownfoil?.Pagination?.create({
+            container: '#paginationControls',
+            getCurrentPage: () => currentPage,
+            setCurrentPage: (page) => { currentPage = page; },
+            getItemsPerPage: () => itemsPerPage,
+            onPageChange: () => renderGames()
+        });
 
         // Fetch overrides for everyone, then fetch games and fold in redirect/projection data before applying explicit overrides
         const overridesPromise = (overridesModule?.fetchOverrides)
