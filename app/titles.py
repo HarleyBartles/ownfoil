@@ -1,6 +1,7 @@
 import os
 import re
 import json
+import string
 import threading
 import contextlib
 import titledb
@@ -9,6 +10,7 @@ from utils import *
 from settings import *
 from pathlib import Path
 import logging
+from functools import lru_cache
 
 from nsz.Fs import Pfs0, Xci, Nsp, Nca, Type, factory
 from nsz.nut import Keys
@@ -30,6 +32,9 @@ _versions_db = None
 _versions_txt_db = None
 _titles_by_title_id = None
 _ident_lock = threading.RLock()
+
+_TRAILING_BRACKET_RE = re.compile(r"\s*\[[^\]]*\]\s*$")
+_PUNCT_TRANSLATION = str.maketrans({ch: " " for ch in string.punctuation})
 
 def identification_in_progress() -> bool:
     with _ident_lock:
@@ -165,6 +170,34 @@ def identify_app_id(app_id):
     
     return title_id.upper(), app_type
 
+@lru_cache(maxsize=4096)
+def _lookup_title_id_by_normalized(norm: str) -> str | None:
+    """Scan TitleDB for a normalized name match."""
+    global _titles_by_title_id
+    if _titles_by_title_id is None:
+        logger.error("titles_by_title_id is not loaded. Call load_titledb first.")
+        return None
+    if not norm:
+        return None
+    best_match = None
+    for tid, rec in _titles_by_title_id.items():
+        if not tid or not isinstance(rec, dict):
+            continue
+        name_raw = (
+            rec.get("name")
+            or rec.get("Name")
+            or rec.get("title")
+            or rec.get("Title")
+            or None
+        )
+        if not name_raw:
+            continue
+        candidate = normalize_display_name(name_raw)
+        if candidate == norm:
+            if best_match is None or tid < best_match:
+                best_match = tid
+    return best_match
+
 def load_titledb():
     global _cnmts_db
     global _titles_db
@@ -203,6 +236,7 @@ def load_titledb():
             if len(tid) == 16:
                 _titles_by_title_id[tid] = rec
 
+        _lookup_title_id_by_normalized.cache_clear()
         _titles_db_loaded = True
         logger.info("TitleDBs loaded.")
 
@@ -230,6 +264,7 @@ def unload_titledb():
         _versions_db = None
         _versions_txt_db = None
         _titles_by_title_id = None
+        _lookup_title_id_by_normalized.cache_clear()
         _titles_db_loaded = False
     logger.info("TitleDBs unloaded.")
 
@@ -347,6 +382,50 @@ def title_id_exists(title_id: str | None) -> bool:
     if not tid:
         return False
     return tid in _titles_by_title_id
+
+def clean_display_name(raw: str | None) -> str:
+    """
+    Produce a display-friendly name from filenames or TitleDB strings.
+    Strips trailing bracket segments and collapses whitespace.
+    """
+    if not raw:
+        return ""
+    text = str(raw)
+    while True:
+        trimmed = _TRAILING_BRACKET_RE.sub("", text)
+        if trimmed == text:
+            break
+        text = trimmed
+    # Collapse internal whitespace
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
+def normalize_display_name(raw: str | None) -> str:
+    """
+    Deterministic normalization used for comparisons.
+    - Uses clean_display_name base
+    - Strips punctuation
+    - Collapses whitespace
+    - Uppercases
+    """
+    cleaned = clean_display_name(raw)
+    if not cleaned:
+        return ""
+    no_punct = cleaned.translate(_PUNCT_TRANSLATION)
+    collapsed = re.sub(r"\s+", " ", no_punct).strip()
+    return collapsed.upper()
+
+def find_title_id_by_normalized_name(name: str | None) -> str | None:
+    """
+    Look up a Title ID by normalized name (already cleaned/uppercase optional).
+    Returns the Title ID string if found.
+    """
+    if not name:
+        return None
+    key = str(name).strip().upper()
+    if not key:
+        return None
+    return _lookup_title_id_by_normalized(key)
 
 def get_game_info(title_id: str | None):
     """

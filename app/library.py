@@ -4,7 +4,7 @@ import hashlib
 import os
 import shutil
 from collections import defaultdict
-from typing import Optional
+from typing import Dict, Optional
 from constants import *
 from db import *
 from overrides import build_override_index
@@ -344,6 +344,7 @@ def identify_library_files(library):
 
     # Load TitleDB once so we can check presence of title_ids quickly
     with titles_lib.titledb_session("identify_library_files"):
+        name_lookup_cache: Dict[str, Optional[str]] = {}
         for n, file in enumerate(files_to_identify):
             try:
                 file_id = file.id
@@ -366,7 +367,12 @@ def identify_library_files(library):
                     for title_id in title_ids:
                         add_title_id_in_db(title_id)
 
+                    file_basename = os.path.splitext(filename)[0]
+                    clean_display_name = titles_lib.clean_display_name(file_basename)
+                    normalized_display_name = titles_lib.normalize_display_name(file_basename)
+
                     nb_content = 0
+                    auto_override_candidates = []
                     for file_content in file_contents:
                         logger.info(
                             f'Identifying file ({n+1}/{nb_to_identify}) - '
@@ -400,13 +406,23 @@ def identify_library_files(library):
                             file_obj = get_file_from_db(file_id)
                             if file_obj and file_obj not in app_row.files:
                                 app_row.files.append(file_obj)
-                            app_row.owned = True
+                        app_row.owned = True
 
+                        auto_override_candidates.append((app_row, file_content))
                         nb_content += 1
 
                     # Update multi-content flags
                     file.multicontent = nb_content > 1
                     file.nb_content = nb_content
+
+                    for app_row, file_content in auto_override_candidates:
+                        _auto_create_metadata_override(
+                            app_row=app_row,
+                            file_content=file_content,
+                            clean_display_name=clean_display_name,
+                            normalized_display_name=normalized_display_name,
+                            name_lookup_cache=name_lookup_cache,
+                        )
 
                     # Determine if any of this file's title_ids are unknown to TitleDB
                     needs_override = any(not titles_lib.title_id_exists(tid) for tid in title_ids)
@@ -443,6 +459,87 @@ def identify_library_files(library):
 
         # Final commit for the batch
         db.session.commit()
+
+def _lookup_title_id_by_normalized_name(normalized_name: str, cache: Dict[str, Optional[str]]) -> Optional[str]:
+    """
+    Resolve a normalized display name to a Title ID using cached lookups.
+    """
+    if not normalized_name:
+        return None
+    key = normalized_name.strip().upper()
+    if not key:
+        return None
+    if key in cache:
+        return cache[key]
+    match = titles_lib.find_title_id_by_normalized_name(key)
+    cache[key] = match
+    return match
+
+def _auto_create_metadata_override(
+    *,
+    app_row,
+    file_content: dict,
+    clean_display_name: str,
+    normalized_display_name: str,
+    name_lookup_cache: Dict[str, Optional[str]],
+) -> None:
+    """
+    Ensure an override exists when TitleDB lacks the detected Title ID.
+    """
+    if not app_row or not getattr(app_row, "id", None):
+        return
+
+    # Skip non-base/DLC entries; overrides are tied to those families.
+    if getattr(app_row, "app_type", None) not in (APP_TYPE_BASE, APP_TYPE_DLC):
+        return
+
+    if AppOverrides.query.filter_by(app_fk=app_row.id).first():
+        return
+
+    title_id = normalize_id(file_content.get("title_id"), "title")
+    if not title_id:
+        return
+
+    if titles_lib.title_id_exists(title_id):
+        return
+
+    corrected_title_id = _lookup_title_id_by_normalized_name(normalized_display_name, name_lookup_cache)
+    if corrected_title_id:
+        corrected_title_id = normalize_id(corrected_title_id, "title")
+        if not corrected_title_id or corrected_title_id == title_id:
+            return
+        _create_override(app_row, corrected_title_id=corrected_title_id)
+        logger.info(
+            "Auto-created redirect override for app %s → TitleID %s",
+            app_row.app_id,
+            corrected_title_id,
+        )
+        return
+
+    clean_name = clean_display_name.strip() if clean_display_name else ""
+    if not clean_name:
+        return
+
+    _create_override(app_row, name=clean_name)
+    logger.info(
+        "Auto-created name override for app %s with name '%s'",
+        app_row.app_id,
+        clean_name,
+    )
+
+def _create_override(app_row, *, corrected_title_id: Optional[str] = None, name: Optional[str] = None) -> None:
+    """
+    Persist a new AppOverrides row attached to the provided app.
+    """
+    ov = AppOverrides(app=app_row)
+    ov.enabled = True
+    ov.created_at = datetime.datetime.utcnow()
+    ov.updated_at = datetime.datetime.utcnow()
+    if corrected_title_id:
+        ov.corrected_title_id = corrected_title_id
+    elif name:
+        ov.name = name
+    db.session.add(ov)
 
 def add_missing_apps_to_db():
     logger.info('Adding missing apps to database...')
