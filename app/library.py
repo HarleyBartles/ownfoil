@@ -1015,7 +1015,12 @@ def _generate_library_snapshot():
             if info_from_titledb is None:
                 logger.warning(f'Info not found for game: {title}')
                 continue
+            metadata_missing = _title_metadata_missing(lookup_id)
+
             title.update(info_from_titledb)
+            title['has_title_db'] = not metadata_missing
+            title['is_unrecognized'] = metadata_missing
+
             # Stable sort/display key:
             # - BASE: use its own (family) name
             # - DLC : use the family/base title name (so DLCs sort alongside their bases)
@@ -1113,6 +1118,7 @@ def _generate_library_snapshot():
         library_data = {
             'hash': compute_library_apps_hash(),
             'titledb_commit': titles_lib.get_titledb_commit_hash() or "",
+            'snapshot_version': LIBRARY_SNAPSHOT_VERSION,
             'library': sorted(
                 games_info,
                 key=lambda x: (

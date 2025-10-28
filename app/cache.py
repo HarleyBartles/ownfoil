@@ -5,7 +5,7 @@ import logging
 import os
 from typing import Callable, Dict
 
-from constants import LIBRARY_CACHE_FILE, OVERRIDES_CACHE_FILE, SHOP_CACHE_FILE
+from constants import LIBRARY_CACHE_FILE, LIBRARY_SNAPSHOT_VERSION, OVERRIDES_CACHE_FILE, SHOP_CACHE_FILE
 from db import AppOverrides, Files, db, get_all_apps
 from utils import load_json
 import titles as titles_lib
@@ -33,6 +33,9 @@ def compute_library_apps_hash() -> str:
 
 def is_library_snapshot_current(saved_library: dict | None) -> bool:
     if not saved_library or not saved_library.get("hash"):
+        return False
+
+    if saved_library.get("snapshot_version") != LIBRARY_SNAPSHOT_VERSION:
         return False
 
     current_apps_hash = compute_library_apps_hash()

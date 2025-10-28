@@ -13,6 +13,7 @@ CONFIG_FILE = os.path.join(CONFIG_DIR, 'settings.yaml')
 KEYS_FILE = os.path.join(CONFIG_DIR, 'keys.txt')
 CACHE_DIR = os.path.join(DATA_DIR, 'cache')
 LIBRARY_CACHE_FILE = os.path.join(CACHE_DIR, 'library.json')
+LIBRARY_SNAPSHOT_VERSION = 2
 OVERRIDES_CACHE_FILE = os.path.join(CACHE_DIR, 'overrides.json')
 SHOP_CACHE_FILE = os.path.join(CACHE_DIR, 'shop.json')
 ALEMBIC_DIR = os.path.join(APP_DIR, 'migrations')
