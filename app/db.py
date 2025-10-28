@@ -108,7 +108,7 @@ class Apps(db.Model):
     files = db.relationship('Files', secondary=app_files, backref=db.backref('apps', lazy='select'))
 
     # One-to-one: delete override automatically when an Apps row is deleted
-    overrides = db.relationship(
+    override = db.relationship(
         'AppOverrides',
         back_populates='app',
         cascade='all, delete-orphan',
@@ -156,7 +156,7 @@ class AppOverrides(db.Model):
     app_fk = db.Column(db.Integer, db.ForeignKey('apps.id', ondelete='CASCADE'), nullable=False, unique=True)
 
     # ORM relationship
-    app = db.relationship('Apps', back_populates='overrides')
+    app = db.relationship('Apps', back_populates='override')
 
     # ---- Overridable metadata (all optional) ----
     name         = db.Column(db.String(512), nullable=True)

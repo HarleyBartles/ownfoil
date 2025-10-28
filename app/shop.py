@@ -78,7 +78,7 @@ def _gen_shop_files():
     rows = (
         db.session.query(Files)
         .options(
-            db.joinedload(Files.apps).joinedload(Apps.overrides),
+            db.joinedload(Files.apps).joinedload(Apps.override),
             db.joinedload(Files.apps).joinedload(Apps.title),
         )
         .all()
@@ -108,12 +108,12 @@ def _gen_shop_files():
                     base_app = (
                         db.session
                             .query(Apps)
-                            .options(db.joinedload(Apps.overrides))
+                            .options(db.joinedload(Apps.override))
                             .filter(Apps.app_id == base_tid, Apps.app_type == titles_lib.APP_TYPE_BASE)
                             .first()
                     )
                     if base_app:
-                        base_ov = getattr(base_app, "overrides", None)
+                        base_ov = getattr(base_app, "override", None)
                         if base_ov and getattr(base_ov, "enabled", False) and getattr(base_ov, "corrected_title_id", None):
                             base_corr = base_ov.corrected_title_id.strip().upper()
 
@@ -435,7 +435,7 @@ def _effective_corrected_title_id_for_file(f: Files) -> str | None:
     app = f.apps[0]
 
     # direct override on this app?
-    ov = getattr(app, "overrides", None)
+    ov = getattr(app, "override", None)
     if ov and getattr(ov, "enabled", False) and getattr(ov, "corrected_title_id", None):
         return ov.corrected_title_id.strip().upper()
 
@@ -447,12 +447,12 @@ def _effective_corrected_title_id_for_file(f: Files) -> str | None:
         if base_tid:
             base = (
                 db.session.query(Apps)
-                .options(db.joinedload(Apps.overrides))
+                .options(db.joinedload(Apps.override))
                 .filter(Apps.app_id == base_tid, Apps.app_type == titles_lib.APP_TYPE_BASE)
                 .first()
             )
         if base:
-            bov = getattr(base, "overrides", None)
+            bov = getattr(base, "override", None)
             if bov and getattr(bov, "enabled", False) and getattr(bov, "corrected_title_id", None):
                 return bov.corrected_title_id.strip().upper()
 

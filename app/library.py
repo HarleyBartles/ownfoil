@@ -3,6 +3,7 @@ import json
 import hashlib
 import os
 import shutil
+import unicodedata
 from collections import defaultdict
 from typing import Dict, Optional
 from constants import *
@@ -15,6 +16,13 @@ from utils import *
 from settings import load_settings
 from db import update_file_path
 from cache import compute_library_apps_hash, is_library_snapshot_current
+
+def _normalize_sort_text(value):
+    if value is None:
+        return ""
+    text = unicodedata.normalize("NFKD", str(value))
+    stripped = "".join(ch for ch in text if not unicodedata.combining(ch))
+    return stripped.casefold()
 
 def organize_file(file_obj, library_path, organizer_settings, watcher):
     try:
@@ -311,12 +319,16 @@ def scan_library_path(library_path):
     set_library_scan_time(library_id)
 
 def get_files_to_identify(library_id, *, force_all: bool = False):
-    q = Files.query.filter(Files.library_id == library_id)
+    q = (
+        Files.query
+        .filter(Files.library_id == library_id)
+        .options(db.joinedload(Files.apps).joinedload(Apps.override))
+    )
 
     if force_all:
         return q.order_by(Files.last_attempt.asc().nullsfirst()).all()
 
-    staged = ("filename", "titles_lib") # staged markers
+    staged = ("filename", "titles_lib", "not_in_titledb") # staged markers
     seven_days_ago = datetime.datetime.utcnow() - datetime.timedelta(days=7)
 
     q = q.filter(
@@ -328,7 +340,22 @@ def get_files_to_identify(library_id, *, force_all: bool = False):
         )
     )
 
-    return q.order_by(Files.last_attempt.asc().nullsfirst()).all()
+    candidates = q.order_by(Files.last_attempt.asc().nullsfirst()).all()
+
+    filtered = []
+    for file in candidates:
+        ident_type = (getattr(file, "identification_type", "") or "").lower()
+        if ident_type == "not_in_titledb":
+            has_override = any(
+                getattr(app, "override", None)
+                and getattr(app.override, "enabled", True)
+                for app in getattr(file, "apps", [])
+            )
+            if has_override:
+                continue
+        filtered.append(file)
+
+    return filtered
 
 def identify_library_files(library):
     # Resolve library_id / path
@@ -340,6 +367,17 @@ def identify_library_files(library):
         library_id = get_library_id(library_path)
 
     files_to_identify = get_files_to_identify(library_id)
+    not_in_titledb_count = sum(
+        1 for f in files_to_identify
+        if (getattr(f, "identification_type", "") or "").lower() == "not_in_titledb"
+    )
+
+    if not_in_titledb_count:
+        logger.info(
+            "Re-identifying %s not-in-TitleDB file(s) for library %s to refresh overrides.",
+            not_in_titledb_count,
+            library_path,
+        )
     nb_to_identify = len(files_to_identify)
 
     # Load TitleDB once so we can check presence of title_ids quickly
@@ -425,7 +463,7 @@ def identify_library_files(library):
                         )
 
                     # Determine if any of this file's title_ids are unknown to TitleDB
-                    needs_override = any(not titles_lib.title_id_exists(tid) for tid in title_ids)
+                    needs_override = any(_title_metadata_missing(tid) for tid in title_ids)
 
                     # - identified=True means "we parsed/understood the file (CNMT etc.)"
                     # - recognition in TitleDB is tracked via identification_type
@@ -460,6 +498,13 @@ def identify_library_files(library):
         # Final commit for the batch
         db.session.commit()
 
+    if not_in_titledb_count:
+        logger.info(
+            "Finished re-identifying %s not-in-TitleDB file(s) for library %s.",
+            not_in_titledb_count,
+            library_path,
+        )
+
 def _lookup_title_id_by_normalized_name(normalized_name: str, cache: Dict[str, Optional[str]]) -> Optional[str]:
     """
     Resolve a normalized display name to a Title ID using cached lookups.
@@ -474,6 +519,19 @@ def _lookup_title_id_by_normalized_name(normalized_name: str, cache: Dict[str, O
     match = titles_lib.find_title_id_by_normalized_name(key)
     cache[key] = match
     return match
+
+def _title_metadata_missing(title_id: Optional[str]) -> bool:
+    """
+    True when TitleDB lacks a usable entry for the given Title ID.
+    """
+    tid = normalize_id(title_id, "title")
+    if not tid:
+        return True
+    if not titles_lib.title_id_exists(tid):
+        return True
+    info = titles_lib.get_game_info(tid) or {}
+    existing_name = (info.get("name") or "").strip().lower()
+    return not existing_name or existing_name in {"unrecognized", "unidentified"}
 
 def _auto_create_metadata_override(
     *,
@@ -500,7 +558,7 @@ def _auto_create_metadata_override(
     if not title_id:
         return
 
-    if titles_lib.title_id_exists(title_id):
+    if not _title_metadata_missing(title_id):
         return
 
     corrected_title_id = _lookup_title_id_by_normalized_name(normalized_display_name, name_lookup_cache)
@@ -1039,12 +1097,15 @@ def _generate_library_snapshot():
         library_data = {
             'hash': compute_library_apps_hash(),
             'titledb_commit': titles_lib.get_titledb_commit_hash() or "",
-            'library': sorted(games_info, key=lambda x: (
-                "title_id_name" not in x,
-                x.get("title_id_name", "Unrecognized") or "Unrecognized",
-                0 if x.get('app_type') == APP_TYPE_BASE else 1,
-                x.get('app_id', "") or ""
-            ))
+            'library': sorted(
+                games_info,
+                key=lambda x: (
+                    "title_id_name" not in x,
+                    _normalize_sort_text(x.get("title_id_name") or "Unrecognized"),
+                    0 if (x.get('app_type') or '').upper() == APP_TYPE_BASE else 1,
+                    (x.get('app_id') or '').upper()
+                )
+            )
         }
 
         # Persist snapshot to disk

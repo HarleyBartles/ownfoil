@@ -1,9 +1,10 @@
 import json
 import os
+import threading
 
 import datetime
 from typing import Optional
-from flask import abort, Blueprint, request, jsonify
+from flask import abort, Blueprint, request, jsonify, current_app
 from sqlalchemy.orm import joinedload
 from werkzeug.exceptions import BadRequest, Conflict, NotFound
 
@@ -26,7 +27,26 @@ overrides_blueprint = Blueprint("overrides_blueprint", __name__, url_prefix="/ap
 
 
 def _refresh_caches():
-    regenerate_cache(OVERRIDES_CACHE_FILE, SHOP_CACHE_FILE)
+    """
+    Regenerate overrides + shop caches without blocking the request.
+    Falls back to synchronous regeneration if we have no app context.
+    """
+    cache_paths = (OVERRIDES_CACHE_FILE, SHOP_CACHE_FILE)
+
+    try:
+        app = current_app._get_current_object()
+    except RuntimeError:
+        regenerate_cache(*cache_paths)
+        return
+
+    def _job():
+        with app.app_context():
+            try:
+                regenerate_cache(*cache_paths)
+            except Exception:
+                logger.exception("Background cache regeneration failed.")
+
+    threading.Thread(target=_job, name="refresh-caches", daemon=True).start()
 
 # --- routes ----------------------------------------------------------------
 @overrides_blueprint.route("", methods=["GET"])

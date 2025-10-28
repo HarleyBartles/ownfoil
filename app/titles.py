@@ -33,8 +33,86 @@ _versions_txt_db = None
 _titles_by_title_id = None
 _ident_lock = threading.RLock()
 
+_overrides_lock = threading.RLock()
+_override_app_ids_cache: set[str] | None = None
+_override_corrected_ids_cache: set[str] | None = None
+_overrides_snapshot_mtime: float | None = None
+
 _TRAILING_BRACKET_RE = re.compile(r"\s*\[[^\]]*\]\s*$")
 _PUNCT_TRANSLATION = str.maketrans({ch: " " for ch in string.punctuation})
+
+def _load_override_id_sets() -> tuple[set[str], set[str]]:
+    """
+    Load and cache the set of Title IDs that have active overrides.
+    Uses the generated overrides snapshot to stay lightweight and avoid
+    introducing a DB dependency in this module.
+    """
+    global _override_app_ids_cache
+    global _override_corrected_ids_cache
+    global _overrides_snapshot_mtime
+
+    with _overrides_lock:
+        try:
+            stat = os.stat(OVERRIDES_CACHE_FILE)
+            current_mtime = stat.st_mtime
+        except FileNotFoundError:
+            _override_app_ids_cache = set()
+            _override_corrected_ids_cache = set()
+            _overrides_snapshot_mtime = None
+            return _override_app_ids_cache, _override_corrected_ids_cache
+
+        if (
+            _override_app_ids_cache is not None
+            and _override_corrected_ids_cache is not None
+            and _overrides_snapshot_mtime == current_mtime
+        ):
+            return _override_app_ids_cache, _override_corrected_ids_cache
+
+        try:
+            with open(OVERRIDES_CACHE_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            # Snapshot may be mid-write; default to empty and try again later.
+            _override_app_ids_cache = set()
+            _override_corrected_ids_cache = set()
+            _overrides_snapshot_mtime = current_mtime
+            return _override_app_ids_cache, _override_corrected_ids_cache
+
+        payload = data.get("payload", {})
+        items = payload.get("items", []) if isinstance(payload, dict) else []
+
+        app_ids: set[str] = set()
+        corrected_ids: set[str] = set()
+
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            if not item.get("enabled", False):
+                continue
+
+            app_id_raw = item.get("app_id")
+            if isinstance(app_id_raw, str):
+                normalized_app_id = normalize_id(app_id_raw, "app")
+                if normalized_app_id and len(normalized_app_id) == 16:
+                    app_ids.add(normalized_app_id)
+
+            corrected_raw = item.get("corrected_title_id")
+            if isinstance(corrected_raw, str):
+                normalized_corrected = normalize_id(corrected_raw, "title")
+                if normalized_corrected:
+                    corrected_ids.add(normalized_corrected)
+
+        _override_app_ids_cache = app_ids
+        _override_corrected_ids_cache = corrected_ids
+        _overrides_snapshot_mtime = current_mtime
+        return app_ids, corrected_ids
+
+def _override_exists_for_title_id(title_id: str) -> bool:
+    tid = normalize_id(title_id, "title")
+    if not tid:
+        return False
+    app_ids, corrected_ids = _load_override_id_sets()
+    return tid in app_ids or tid in corrected_ids
 
 def identification_in_progress() -> bool:
     with _ident_lock:
@@ -455,11 +533,7 @@ def get_game_info(title_id: str | None):
     try:
         title_info = _titles_by_title_id.get(tid)
         if not title_info:
-            if tid.startswith('05'):
-                logger.info(f"Homebrew title not identified: {tid}")
-            else:
-                logger.warning(f"Title ID not found in titledb: {tid}")
-            return {
+            fallback = {
                 "name": None,
                 "id": tid,
                 "category": "",
@@ -467,6 +541,12 @@ def get_game_info(title_id: str | None):
                 "description": None,
                 "release_date": None,
             }
+            if not _override_exists_for_title_id(tid):
+                if tid.startswith('05'):
+                    logger.info(f"Homebrew title not identified: {tid}")
+                else:
+                    logger.warning(f"Title ID not found in titledb: {tid}")
+            return fallback
 
         # Accept multiple spellings & normalize immediately
         release_raw = (

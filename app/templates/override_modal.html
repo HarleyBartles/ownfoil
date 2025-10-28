@@ -47,32 +47,33 @@
           <div class="form-text">Leave empty to reset to TitleDB name.</div>
         </div>
         <div class="mb-2">
-          <label for="ov-release-date" class="form-label">Release date</label>
-            <!-- Disable manual typing/pasting to ensure consistent format -->
-            <input
-              type="date"
-              class="form-control"
-              id="ov-release-date"
-              name="release_date"
-              placeholder="yyyy-MM-dd"
-              inputmode="numeric"
-              pattern="\d{4}-\d{2}-\d{2}"
-              onkeydown="return false"
-              onpaste="return false"
-            />
-          <div class="form-text">Click or tap to select a date</div>
-        </div>
-        <div class="mb-2">
-          <label class="form-label">Region</label>
-          <input id="ovr-region" type="text" class="form-control" placeholder="US, EU, JP, ...">
-        </div>
-        <div class="mb-2">
           <label class="form-label">Description</label>
           <textarea id="ovr-description" class="form-control" rows="3" placeholder="Description"></textarea>
         </div>
-        <div class="mb-2">
-          <label class="form-label">Version</label>
-          <input id="ovr-version" type="number" class="form-control" placeholder="e.g. 10000">
+        <div class="row g-2 mb-2">
+          <div class="col-4">
+            <label for="ov-release-date" class="form-label">Release date</label>
+              <!-- Disable manual typing/pasting to ensure consistent format -->
+              <input
+                type="date"
+                class="form-control"
+                id="ov-release-date"
+                name="release_date"
+                placeholder="yyyy-MM-dd"
+                inputmode="numeric"
+                pattern="\d{4}-\d{2}-\d{2}"
+                onkeydown="return false"
+                onpaste="return false"
+              />
+          </div>
+          <div class="col-4">
+            <label class="form-label">Region</label>
+            <input id="ovr-region" type="text" class="form-control" placeholder="US, EU, JP, ...">
+          </div>
+          <div class="col-4">
+            <label class="form-label">Version</label>
+            <input id="ovr-version" type="number" class="form-control" placeholder="e.g. 10000">
+          </div>
         </div>
 
         <!-- Artwork (previews-only + hidden file inputs) -->
