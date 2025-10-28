@@ -346,6 +346,12 @@ def get_files_to_identify(library_id, *, force_all: bool = False):
     for file in candidates:
         ident_type = (getattr(file, "identification_type", "") or "").lower()
         if ident_type == "not_in_titledb":
+            app_types = {
+                (getattr(app, "app_type", "") or "").upper()
+                for app in getattr(file, "apps", [])
+            }
+            if APP_TYPE_UPD in app_types:
+                continue
             has_override = any(
                 getattr(app, "override", None)
                 and getattr(app.override, "enabled", True)
@@ -1015,6 +1021,16 @@ def _generate_library_snapshot():
             # - DLC : use the family/base title name (so DLCs sort alongside their bases)
             if title['app_type'] == APP_TYPE_DLC:
                 family_info = titles_lib.get_game_info(title['title_id'])  # family/base lookup
+                if family_info:
+                    # Use the family's artwork when this DLC lacks its own assets so cards don’t show the gray placeholder.
+                    if not (title.get("bannerUrl") or title.get("banner_path")):
+                        fallback_banner = family_info.get("bannerUrl")
+                        if fallback_banner:
+                            title["bannerUrl"] = fallback_banner
+                    if not (title.get("iconUrl") or title.get("icon_path")):
+                        fallback_icon = family_info.get("iconUrl")
+                        if fallback_icon:
+                            title["iconUrl"] = fallback_icon
                 family_name = (family_info or {}).get('name') or title.get('name')
                 title['title_id_name'] = family_name or 'Unrecognized'
             else:

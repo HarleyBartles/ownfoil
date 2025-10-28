@@ -37,6 +37,7 @@ _overrides_lock = threading.RLock()
 _override_app_ids_cache: set[str] | None = None
 _override_corrected_ids_cache: set[str] | None = None
 _overrides_snapshot_mtime: float | None = None
+_overrides_cache_path: str | None = None
 
 _TRAILING_BRACKET_RE = re.compile(r"\s*\[[^\]]*\]\s*$")
 _PUNCT_TRANSLATION = str.maketrans({ch: " " for ch in string.punctuation})
@@ -50,10 +51,26 @@ def _load_override_id_sets() -> tuple[set[str], set[str]]:
     global _override_app_ids_cache
     global _override_corrected_ids_cache
     global _overrides_snapshot_mtime
+    global _overrides_cache_path
+
+    if _overrides_cache_path is None:
+        candidates = [OVERRIDES_CACHE_FILE]
+        # Allow deployments that keep data/ alongside app/ instead of under it.
+        project_data_path = os.path.join(os.path.dirname(APP_DIR), "data", "cache", "overrides.json")
+        if project_data_path not in candidates:
+            candidates.append(project_data_path)
+
+        for candidate in candidates:
+            if os.path.exists(candidate):
+                _overrides_cache_path = candidate
+                break
+        else:
+            # Fall back to the primary location even if it does not exist yet.
+            _overrides_cache_path = OVERRIDES_CACHE_FILE
 
     with _overrides_lock:
         try:
-            stat = os.stat(OVERRIDES_CACHE_FILE)
+            stat = os.stat(_overrides_cache_path)
             current_mtime = stat.st_mtime
         except FileNotFoundError:
             _override_app_ids_cache = set()
@@ -69,7 +86,7 @@ def _load_override_id_sets() -> tuple[set[str], set[str]]:
             return _override_app_ids_cache, _override_corrected_ids_cache
 
         try:
-            with open(OVERRIDES_CACHE_FILE, "r", encoding="utf-8") as f:
+            with open(_overrides_cache_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
         except Exception:
             # Snapshot may be mid-write; default to empty and try again later.
@@ -93,8 +110,8 @@ def _load_override_id_sets() -> tuple[set[str], set[str]]:
             app_id_raw = item.get("app_id")
             if isinstance(app_id_raw, str):
                 normalized_app_id = normalize_id(app_id_raw, "app")
-                if normalized_app_id and len(normalized_app_id) == 16:
-                    app_ids.add(normalized_app_id)
+                if normalized_app_id:
+                    app_ids.add(normalized_app_id[:16])
 
             corrected_raw = item.get("corrected_title_id")
             if isinstance(corrected_raw, str):
