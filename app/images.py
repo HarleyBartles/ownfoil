@@ -146,6 +146,7 @@ def garbage_collect_orphan_art_files():
     existing = {ov.banner_path for ov in AppOverrides.query if ov.banner_path} \
              | {ov.icon_path for ov in AppOverrides.query if ov.icon_path}
 
+    logger.info("Garbage collection started.")
     for kind, dir_key, url_key in (
         ("banner", "BANNERS_UPLOAD_DIR", "BANNERS_UPLOAD_URL_PREFIX"),
         ("icon",   "ICONS_UPLOAD_DIR",  "ICONS_UPLOAD_URL_PREFIX"),
@@ -153,7 +154,7 @@ def garbage_collect_orphan_art_files():
         upload_dir = current_app.config.get(dir_key) or current_app.config["BANNERS_UPLOAD_DIR"]
         if not os.path.isdir(upload_dir):
             continue
-        logger.info(f"Image Garbage Collection: scanning dir={upload_dir}, existing={len(existing)}")
+        logger.info(f"Scanning {kind } directory: {upload_dir}... {len(existing)} images found.")
         for name in os.listdir(upload_dir):
             if not name.endswith((".png", ".jpg", ".jpeg", ".webp")):
                 continue
@@ -161,8 +162,10 @@ def garbage_collect_orphan_art_files():
             url_prefix = (current_app.config.get(url_key) or current_app.config["BANNERS_UPLOAD_URL_PREFIX"]).rstrip("/")
             public = f"{url_prefix}/{name}"
             if public not in existing:
+                logger.info(f"Removing unused {kind} image: {path}.")
                 try: os.remove(path)
                 except OSError: pass
+    logger.info("Garbage collection completed.")
 
 def _allowed_image(filename: str) -> bool:
     if not filename:
