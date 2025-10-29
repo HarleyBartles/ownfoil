@@ -958,6 +958,7 @@ def update_titles():
             db.session.commit()
 
     db.session.commit()
+
 def generate_library_snapshot():
     """
     Public entry-point for routes:
@@ -978,7 +979,6 @@ def generate_library_snapshot():
     etag = hashlib.sha256(etag_source).hexdigest()
     return library, etag
 
-
 def load_or_generate_library_snapshot():
     """
     Load the BASE library (no overrides) from disk if hash unchanged.
@@ -990,7 +990,6 @@ def load_or_generate_library_snapshot():
 
     # Hash changed or cache missing/corrupt -> regenerate
     return _generate_library_snapshot()
-
 
 def _generate_library_snapshot():
     """Generate the BASE/DLC library from Apps table and cache to disk."""
@@ -1115,19 +1114,137 @@ def _generate_library_snapshot():
 
         _add_files_without_apps(games_info)
 
+        def _normalized_id(value, kind: str) -> str:
+            if not isinstance(value, str):
+                return ""
+            trimmed = value.strip()
+            if not trimmed:
+                return ""
+            try:
+                normalized = normalize_id(trimmed, kind)
+            except Exception:
+                normalized = None
+            if normalized:
+                return normalized.upper()
+            return trimmed.upper()
+
+        override_index = build_override_index(include_disabled=False) or {}
+        raw_overrides = override_index.get("by_app") if isinstance(override_index, dict) else {}
+        overrides_by_app: dict[str, dict] = {}
+        if isinstance(raw_overrides, dict):
+            for raw_app_id, payload in raw_overrides.items():
+                if not isinstance(payload, dict):
+                    continue
+                normalized_app_id = _normalized_id(raw_app_id, "app")
+                if normalized_app_id:
+                    overrides_by_app[normalized_app_id] = payload
+
+        def _first_nonempty(*values):
+            for val in values:
+                if isinstance(val, str):
+                    trimmed = val.strip()
+                    if trimmed:
+                        return trimmed
+            return None
+
+        def _override_for_app(app_id):
+            key = _normalized_id(app_id, "app")
+            return overrides_by_app.get(key)
+
+        base_sort_name_by_id: dict[str, str] = {}
+        for game in games_info:
+            app_type = (game.get('app_type') or '').upper()
+            if app_type != APP_TYPE_BASE:
+                continue
+
+            override = _override_for_app(game.get('app_id'))
+            override_name = _first_nonempty(override.get('name')) if override else None
+            display_name = _first_nonempty(
+                override_name,
+                game.get('title_id_name'),
+                game.get('name')
+            ) or 'Unrecognized'
+
+            for candidate in (
+                _normalized_id(game.get('title_id'), "title"),
+                _normalized_id(game.get('app_id'), "app"),
+                _normalized_id(game.get('corrected_title_id'), "title")
+            ):
+                if candidate:
+                    base_sort_name_by_id[candidate] = display_name
+
+            if override:
+                corrected = _normalized_id(override.get('corrected_title_id'), "title")
+                if corrected:
+                    base_sort_name_by_id[corrected] = display_name
+
+        def _compute_sort_tuple(game: dict) -> tuple[str, str, int, str, str]:
+            app_type = (game.get('app_type') or '').upper()
+            app_id_norm = _normalized_id(game.get('app_id'), "app")
+            title_id_norm = _normalized_id(game.get('title_id'), "title")
+            override = overrides_by_app.get(app_id_norm)
+            override_name = _first_nonempty(override.get('name')) if override else None
+
+            if app_type == APP_TYPE_DLC:
+                base_sort_name = base_sort_name_by_id.get(title_id_norm)
+                if not base_sort_name and override:
+                    corrected = _normalized_id(override.get('corrected_title_id'), "title")
+                    if corrected:
+                        base_sort_name = base_sort_name_by_id.get(corrected)
+                if not base_sort_name:
+                    corrected = _normalized_id(game.get('corrected_title_id'), "title")
+                    if corrected:
+                        base_sort_name = base_sort_name_by_id.get(corrected)
+
+                sort_name = _first_nonempty(
+                    base_sort_name,
+                    game.get('title_id_name'),
+                    override_name,
+                    game.get('name')
+                ) or 'Unrecognized'
+                base_key = title_id_norm or app_id_norm
+                sort_kind = 1
+            elif app_type == APP_TYPE_BASE:
+                sort_name = base_sort_name_by_id.get(title_id_norm) or (
+                    _first_nonempty(
+                        override_name,
+                        game.get('title_id_name'),
+                        game.get('name')
+                    ) or 'Unrecognized'
+                )
+                base_key = title_id_norm or app_id_norm
+                sort_kind = 0
+            else:
+                sort_name = _first_nonempty(
+                    override_name,
+                    game.get('title_id_name'),
+                    game.get('name')
+                ) or 'Unrecognized'
+                base_key = title_id_norm or app_id_norm
+                sort_kind = 2
+
+            fallback = game.get('file_basename') or ''
+            return sort_name, base_key, sort_kind, app_id_norm, fallback
+
+        def _library_sort_key(record: dict) -> tuple:
+            sort_name, base_key, sort_kind, app_id_norm, fallback = _compute_sort_tuple(record)
+            fallback_key = fallback.upper() if isinstance(fallback, str) else ''
+            return (
+                0 if sort_name else 1,
+                _normalize_sort_text(sort_name),
+                base_key,
+                sort_kind,
+                app_id_norm,
+                fallback_key,
+            )
+
+        sorted_games = sorted(games_info, key=_library_sort_key)
+
         library_data = {
             'hash': compute_library_apps_hash(),
             'titledb_commit': titles_lib.get_titledb_commit_hash() or "",
             'snapshot_version': LIBRARY_SNAPSHOT_VERSION,
-            'library': sorted(
-                games_info,
-                key=lambda x: (
-                    "title_id_name" not in x,
-                    _normalize_sort_text(x.get("title_id_name") or "Unrecognized"),
-                    0 if (x.get('app_type') or '').upper() == APP_TYPE_BASE else 1,
-                    (x.get('app_id') or '').upper()
-                )
-            )
+            'library': sorted_games
         }
 
         # Persist snapshot to disk
