@@ -3,7 +3,7 @@ import hashlib
 import json
 import logging
 import os
-from typing import Callable, Dict
+from typing import Callable, Dict, Optional
 
 from constants import LIBRARY_CACHE_FILE, LIBRARY_SNAPSHOT_VERSION, OVERRIDES_CACHE_FILE, SHOP_CACHE_FILE
 from db import AppOverrides, Files, db, get_all_apps
@@ -12,7 +12,7 @@ import titles as titles_lib
 
 logger = logging.getLogger("main")
 
-CacheValidator = Callable[[dict | None], bool]
+CacheValidator = Callable[[Optional[dict]], bool]
 
 
 def compute_library_apps_hash() -> str:
@@ -31,7 +31,7 @@ def compute_library_apps_hash() -> str:
     return hash_md5.hexdigest()
 
 
-def is_library_snapshot_current(saved_library: dict | None) -> bool:
+def is_library_snapshot_current(saved_library: Optional[dict]) -> bool:
     if not saved_library or not saved_library.get("hash"):
         return False
 
@@ -95,7 +95,7 @@ def compute_overrides_snapshot_hash() -> str:
     ).hexdigest()
 
 
-def is_overrides_snapshot_current(saved_snapshot: dict | None) -> bool:
+def is_overrides_snapshot_current(saved_snapshot: Optional[dict]) -> bool:
     if not saved_snapshot or not isinstance(saved_snapshot, dict):
         return False
     stored_hash = saved_snapshot.get("hash")
@@ -138,7 +138,7 @@ def compute_shop_snapshot_hash() -> str:
     ).hexdigest()
 
 
-def is_shop_snapshot_current(saved_snapshot: dict | None) -> bool:
+def is_shop_snapshot_current(saved_snapshot: Optional[dict]) -> bool:
     if not saved_snapshot or not isinstance(saved_snapshot, dict):
         return False
     stored_hash = saved_snapshot.get("hash")

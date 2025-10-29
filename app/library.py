@@ -1,21 +1,20 @@
 import datetime
-import json
 import hashlib
 import os
 import shutil
 import unicodedata
 from collections import defaultdict
 from typing import Dict, Optional
+
+from sqlalchemy import or_
+
+from cache import compute_library_apps_hash, is_library_snapshot_current
 from constants import *
 from db import *
 from overrides import build_override_index
-import titles as titles_lib
-from pathlib import Path
-from sqlalchemy import or_
-from utils import *
 from settings import load_settings
-from db import update_file_path
-from cache import compute_library_apps_hash, is_library_snapshot_current
+import titles as titles_lib
+from utils import *
 
 def _normalize_sort_text(value):
     if value is None:
@@ -1415,20 +1414,22 @@ def _get_or_create_app(app_id: str, app_version, app_type: str, title_db_id: Opt
     # Defensive: resolve family/base Titles FK if missing
     if not title_db_id:
         base_tid = None
-        try:
-            if app_type == APP_TYPE_BASE:
-                base_tid = app_id
-            elif app_type == APP_TYPE_UPD and isinstance(app_id, str) and len(app_id) == 16:
-                base_tid = app_id[:-3] + "000"
-            elif app_type == APP_TYPE_DLC:
-                info = titles_lib.get_game_info(app_id) or {}
-                base_tid = (info.get("title_id") or "").strip().upper() or None
-            if base_tid:
-                add_title_id_in_db(base_tid)               # idempotent
-                title_db_id = get_title_id_db_id(base_tid) # int or None
-        except Exception:
-            # fail-soft: leave title_db_id as None; we'll guard below
-            pass
+        if isinstance(app_id, str):
+            try:
+                if app_type == APP_TYPE_BASE:
+                    base_tid = app_id
+                elif app_type in (APP_TYPE_UPD, APP_TYPE_DLC) and len(app_id) >= 16:
+                    base_tid = titles_lib.get_title_id_from_app_id(app_id, app_type)
+            except Exception:
+                base_tid = None
+
+        base_tid = normalize_id(base_tid, "title") if base_tid else None
+        if base_tid:
+            try:
+                add_title_id_in_db(base_tid)  # idempotent
+            except Exception as exc:
+                logger.debug("Failed to ensure Title row for %s: %s", base_tid, exc)
+            title_db_id = get_title_id_db_id(base_tid)
 
     if not title_db_id:
         # We *cannot* create a new Apps row without a Titles FK (nullable=False).

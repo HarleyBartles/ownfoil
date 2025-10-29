@@ -26,28 +26,6 @@ logger = logging.getLogger('main')
 overrides_blueprint = Blueprint("overrides_blueprint", __name__, url_prefix="/api/overrides")
 
 
-def _refresh_caches():
-    """
-    Regenerate overrides + shop caches without blocking the request.
-    Falls back to synchronous regeneration if we have no app context.
-    """
-    cache_paths = (OVERRIDES_CACHE_FILE, SHOP_CACHE_FILE)
-
-    try:
-        app = current_app._get_current_object()
-    except RuntimeError:
-        regenerate_cache(*cache_paths)
-        return
-
-    def _job():
-        with app.app_context():
-            try:
-                regenerate_cache(*cache_paths)
-            except Exception:
-                logger.exception("Background cache regeneration failed.")
-
-    threading.Thread(target=_job, name="refresh-caches", daemon=True).start()
-
 # --- routes ----------------------------------------------------------------
 @overrides_blueprint.route("", methods=["GET"])
 @access_required("shop")
@@ -383,6 +361,28 @@ def build_override_index(include_disabled: bool = False) -> dict:
         }
 
     return {"by_app": by_app, "count": len(by_app)}
+
+def _refresh_caches():
+    """
+    Regenerate overrides + shop caches without blocking the request.
+    Falls back to synchronous regeneration if we have no app context.
+    """
+    cache_paths = (OVERRIDES_CACHE_FILE, SHOP_CACHE_FILE)
+
+    try:
+        app = current_app._get_current_object()
+    except RuntimeError:
+        regenerate_cache(*cache_paths)
+        return
+
+    def _job():
+        with app.app_context():
+            try:
+                regenerate_cache(*cache_paths)
+            except Exception:
+                logger.exception("Background cache regeneration failed.")
+
+    threading.Thread(target=_job, name="refresh-caches", daemon=True).start()
 
 # Note: UI sends multipart only when a banner or icon upload/removal is requested; otherwise JSON.
 # This keeps existing JSON flows working while enabling binary upload.

@@ -19,6 +19,7 @@ import json
 import os
 import hashlib
 import logging
+from typing import Optional
 
 logger = logging.getLogger('main')
 
@@ -45,6 +46,29 @@ def load_or_generate_shop_snapshot():
     if saved and saved.get("hash") == current_hash:
         return saved
     return _generate_shop_snapshot()
+
+def encrypt_shop(shop):
+    input = json.dumps(shop).encode('utf-8')
+    # random 128-bit AES key (16 bytes), used later for symmetric encryption (AES)
+    aesKey = random.randint(0,0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF).to_bytes(0x10, 'big')
+    # zstandard compression
+    flag = 0xFD
+    cctx = zstd.ZstdCompressor(level=22)
+    buf = cctx.compress(input)
+    sz = len(buf)
+
+    # Encrypt the AES key with RSA, PKCS1_OAEP padding scheme
+    pubKey = RSA.importKey(TINFOIL_PUBLIC_KEY)
+    cipher = PKCS1_OAEP.new(pubKey, hashAlgo = SHA256, label=b'')
+    # Now the AES key can only be decrypted with Tinfoil private key
+    sessionKey = cipher.encrypt(aesKey)
+
+    # Encrypting the Data with AES
+    cipher = AES.new(aesKey, AES.MODE_ECB)
+    buf = cipher.encrypt(buf + (b'\x00' * (0x10 - (sz % 0x10))))
+
+    binary_data = b'TINFOIL' + flag.to_bytes(1, byteorder='little') + sessionKey + sz.to_bytes(8, 'little') + buf
+    return binary_data
 
 def _generate_shop_snapshot():
     # Build only what Tinfoil needs
@@ -139,29 +163,6 @@ def _gen_shop_files():
         })
 
     return shop_files
-
-def encrypt_shop(shop):
-    input = json.dumps(shop).encode('utf-8')
-    # random 128-bit AES key (16 bytes), used later for symmetric encryption (AES)
-    aesKey = random.randint(0,0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF).to_bytes(0x10, 'big')
-    # zstandard compression
-    flag = 0xFD
-    cctx = zstd.ZstdCompressor(level=22)
-    buf = cctx.compress(input)
-    sz = len(buf)
-
-    # Encrypt the AES key with RSA, PKCS1_OAEP padding scheme
-    pubKey = RSA.importKey(TINFOIL_PUBLIC_KEY)
-    cipher = PKCS1_OAEP.new(pubKey, hashAlgo = SHA256, label=b'')
-    # Now the AES key can only be decrypted with Tinfoil private key
-    sessionKey = cipher.encrypt(aesKey)
-
-    # Encrypting the Data with AES
-    cipher = AES.new(aesKey, AES.MODE_ECB)
-    buf = cipher.encrypt(buf + (b'\x00' * (0x10 - (sz % 0x10))))
-
-    binary_data = b'TINFOIL' + flag.to_bytes(1, byteorder='little') + sessionKey + sz.to_bytes(8, 'little') + buf
-    return binary_data
 
 def _build_titledb_from_overrides():
     """
@@ -422,7 +423,7 @@ def _version_str_to_int(version_str):
     a, b, c = (int(p) for p in (parts + ["0", "0"])[:3])
     return a * 10000 + b * 100 + c
 
-def _effective_corrected_title_id_for_file(f: Files) -> str | None:
+def _effective_corrected_title_id_for_file(f: Files) -> Optional[str]:
     """
     Return the corrected TitleID to present for this file, if any.
     Rules:

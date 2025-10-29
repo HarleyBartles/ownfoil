@@ -4,6 +4,7 @@ import json
 import string
 import threading
 import contextlib
+from typing import Optional
 import titledb
 from constants import *
 from utils import *
@@ -34,10 +35,10 @@ _titles_by_title_id = None
 _ident_lock = threading.RLock()
 
 _overrides_lock = threading.RLock()
-_override_app_ids_cache: set[str] | None = None
-_override_corrected_ids_cache: set[str] | None = None
-_overrides_snapshot_mtime: float | None = None
-_overrides_cache_path: str | None = None
+_override_app_ids_cache: Optional[set[str]] = None
+_override_corrected_ids_cache: Optional[set[str]] = None
+_overrides_snapshot_mtime: Optional[float] = None
+_overrides_cache_path: Optional[str] = None
 
 _TRAILING_BRACKET_RE = re.compile(r"\s*\[[^\]]*\]\s*$")
 _PUNCT_TRANSLATION = str.maketrans({ch: " " for ch in string.punctuation})
@@ -266,7 +267,7 @@ def identify_app_id(app_id):
     return title_id.upper(), app_type
 
 @lru_cache(maxsize=4096)
-def _lookup_title_id_by_normalized(norm: str) -> str | None:
+def _lookup_title_id_by_normalized(norm: str) -> Optional[str]:
     """Scan TitleDB for a normalized name match."""
     global _titles_by_title_id
     if _titles_by_title_id is None:
@@ -467,7 +468,7 @@ def identify_file(filepath):
             } for c in contents]
     return identification, success, contents, error
 
-def title_id_exists(title_id: str | None) -> bool:
+def title_id_exists(title_id: Optional[str]) -> bool:
     """True if TitleDB has a record for this Title ID."""
     global _titles_by_title_id
     if _titles_by_title_id is None:
@@ -478,7 +479,7 @@ def title_id_exists(title_id: str | None) -> bool:
         return False
     return tid in _titles_by_title_id
 
-def clean_display_name(raw: str | None) -> str:
+def clean_display_name(raw: Optional[str]) -> str:
     """
     Produce a display-friendly name from filenames or TitleDB strings.
     Strips trailing bracket segments and collapses whitespace.
@@ -495,7 +496,7 @@ def clean_display_name(raw: str | None) -> str:
     text = re.sub(r"\s+", " ", text)
     return text.strip()
 
-def normalize_display_name(raw: str | None) -> str:
+def normalize_display_name(raw: Optional[str]) -> str:
     """
     Deterministic normalization used for comparisons.
     - Uses clean_display_name base
@@ -510,7 +511,7 @@ def normalize_display_name(raw: str | None) -> str:
     collapsed = re.sub(r"\s+", " ", no_punct).strip()
     return collapsed.upper()
 
-def find_title_id_by_normalized_name(name: str | None) -> str | None:
+def find_title_id_by_normalized_name(name: Optional[str]) -> Optional[str]:
     """
     Look up a Title ID by normalized name (already cleaned/uppercase optional).
     Returns the Title ID string if found.
@@ -522,7 +523,7 @@ def find_title_id_by_normalized_name(name: str | None) -> str | None:
         return None
     return _lookup_title_id_by_normalized(key)
 
-def get_game_info(title_id: str | None):
+def get_game_info(title_id: Optional[str]):
     """
     Retrieve a TitleDB record for a given Title ID.
 

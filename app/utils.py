@@ -1,10 +1,11 @@
+import json
 import logging
+import os
 import re
+import tempfile
 import threading
 from functools import wraps
-import json
-import os
-import tempfile
+from typing import Any, Optional
 
 from constants import *
 
@@ -72,7 +73,7 @@ def safe_write_json(path, data, **dump_kwargs):
         # Atomically replace target file
         os.replace(tmp_path, path)
 
-def save_json(data, path, **dump_kwargs):
+def save_json(data: Any, path: str, **dump_kwargs: Any) -> None:
     """
     Save JSON atomically using safe_write_json, ensuring the parent
     directory exists. Accepts extra json.dump kwargs.
@@ -81,7 +82,7 @@ def save_json(data, path, **dump_kwargs):
     os.makedirs(dirpath, exist_ok=True)
     safe_write_json(path, data, **dump_kwargs)
 
-def load_json(path, default=None):
+def load_json(path: str, default: Any = None) -> Any:
     """
     Load JSON from disk. Returns `default` if the file is missing.
     Raises on decode or IO errors so callers can handle/report.
@@ -146,7 +147,7 @@ def delete_empty_folders(path):
         if not deleted_any_in_pass:
             break # No more empty directories found in this pass, so we are done
 
-def normalize_release_date(value):
+def normalize_release_date(value: Any) -> Optional[str]:
     """
     Normalize a release date into 'YYYY-MM-DD' format.
 
@@ -185,7 +186,7 @@ def normalize_release_date(value):
 
     return None
 
-def normalize_id(raw: str | None, kind: str = "title") -> str | None:
+def normalize_id(raw: Optional[str], kind: str = "title") -> Optional[str]:
     """
     Normalize and validate a Nintendo ID (Title ID or App ID).
 
