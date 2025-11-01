@@ -643,12 +643,17 @@
     }
 
     function findCommonElements(...arrays) {
-        // Filter out empty arrays
-        const nonEmptyArrays = arrays.filter(array => Array.isArray(array) && array.length > 0);
-        if (nonEmptyArrays.length === 0) return [];
-        return nonEmptyArrays.reduce((common, currentArray) => 
-            common.filter(item => currentArray.includes(item))
-        );
+        const validArrays = arrays.filter(Array.isArray);
+        if (validArrays.length === 0) return [];
+
+        let common = validArrays[0].slice();
+        for (let i = 1; i < validArrays.length; i++) {
+            const currentArray = validArrays[i];
+            if (!Array.isArray(currentArray)) continue;
+            if (currentArray.length === 0 || common.length === 0) return [];
+            common = common.filter(item => currentArray.includes(item));
+        }
+        return common;
     }
 
     // Function to apply filters and show/hide game cards with animation
@@ -711,15 +716,15 @@
                 if (Overrides?.hasActiveOverride) gamesFilteredBySpecial = gamesFilteredBySpecial.concat(games.filter(game => Overrides.hasActiveOverride(game)));
             }
 
+            const filterGroups = [games];
+            if (activeTypeFilters.size > 0) filterGroups.push(gamesFilteredByType);
+            if (activeOwnershipFilters.size > 0) filterGroups.push(gamesFilteredByOwnership);
+            if (activeUpdateFilters.size > 0) filterGroups.push(gamesFilteredByUpdate);
+            if (activeCompletionFilters.size > 0) filterGroups.push(gamesFilteredByCompletion);
+            if (activeSpecialFilters.size > 0) filterGroups.push(gamesFilteredBySpecial);
+
             // Base (non-text) filtered list
-            baseFilteredGames = findCommonElements(
-                games,
-                gamesFilteredByType,
-                gamesFilteredByOwnership,
-                gamesFilteredByUpdate,
-                gamesFilteredByCompletion,
-                gamesFilteredBySpecial
-            );
+            baseFilteredGames = findCommonElements(...filterGroups);
         }
 
         // Now apply SEARCH on top of baseFilteredGames
