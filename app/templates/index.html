@@ -811,20 +811,43 @@
                 loadFiltersFromStorage();
             });
 
+        function recalcPageForNewPageSize(prevItemsPerPage) {
+            const totalItems = Array.isArray(filteredGames) ? filteredGames.length : 0;
+            if (totalItems === 0) {
+                setCurrentPageValue(1);
+                return;
+            }
+
+            const prevSize = Number(prevItemsPerPage);
+            const newSize = Number(itemsPerPage);
+            const safePrevItemsPerPage = Math.max(1, Number.isFinite(prevSize) ? Math.floor(prevSize) : 1);
+            const safeNewItemsPerPage = Math.max(1, Number.isFinite(newSize) ? Math.floor(newSize) : 1);
+            const safePrevPage = Math.max(1, normalizePage(currentPage));
+
+            const firstItemIndex = (safePrevPage - 1) * safePrevItemsPerPage;
+            const candidatePage = Math.floor(firstItemIndex / safeNewItemsPerPage) + 1;
+            const totalPages = Math.max(1, Math.ceil(totalItems / safeNewItemsPerPage));
+
+            const clampedPage = Math.min(Math.max(candidatePage, 1), totalPages);
+            setCurrentPageValue(clampedPage);
+        }
+
         // Event listeners for items per page dropdown
         $('.items-per-page').click(function () {
-            itemsPerPage = $(this).data('value');
+            const prevItemsPerPage = itemsPerPage;
+            itemsPerPage = parseInt($(this).data('value'), 10);
             localStorage.setItem('itemsPerPage', itemsPerPage);
-            setCurrentPageValue(1); // Reset to first page
+            recalcPageForNewPageSize(prevItemsPerPage);
             renderGames();
         });
 
         $('#applyCustomItemsPerPage').click(function () {
+            const prevItemsPerPage = itemsPerPage;
             const customValue = $('#customItemsPerPage').val();
             if (customValue && customValue > 0) {
-                itemsPerPage = parseInt(customValue);
+                itemsPerPage = parseInt(customValue, 10);
                 localStorage.setItem('itemsPerPage', itemsPerPage);
-                setCurrentPageValue(1); // Reset to first page
+                recalcPageForNewPageSize(prevItemsPerPage);
                 renderGames();
             }
         });
