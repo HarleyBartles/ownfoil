@@ -149,6 +149,11 @@
             <!-- <label for="cardSizeRange" class="form-label">Card Size</label> -->
             <input type="range" class="form-range" min="1" max="5" step="1" id="cardSizeRange">
         </div>
+        <!-- Page summary -->
+        <div class="col-auto">
+            <div class="pagination-summary text-nowrap small text-white-50 ms-2 d-none"
+                id="paginationSummary" aria-live="polite" role="status"></div>
+        </div>
     </div>
     <div class="grid-container" id="gridContainer">
         <div class="row g-3" id="gameGrid"></div>
@@ -157,7 +162,6 @@
 
     <!-- Pagination controls -->
     <nav aria-label="Page navigation" class="mt-3">
-        <div class="pagination-summary text-center text-muted small mb-1" id="paginationSummary" aria-live="polite"></div>
         <ul class="pagination justify-content-center" id="paginationControls"></ul>
     </nav>
 </div>
@@ -506,13 +510,15 @@
     }
 
     function updatePaginationSummary(totalItems) {
-        const el = document.getElementById('paginationSummary');
-        if (!el) return;
+        const $summary = $('#paginationSummary');
+        if (!$summary.length) return;
+
+        $summary.text('');
+        $summary.addClass('d-none');
 
         const safeTotal = Number.isFinite(totalItems) && totalItems > 0 ? Math.floor(totalItems) : 0;
         const safeItemsPerPage = Math.max(1, Number.isFinite(itemsPerPage) ? Math.floor(itemsPerPage) : 1);
         if (safeTotal === 0) {
-            el.textContent = '0 to 0 of 0';
             return;
         }
 
@@ -520,8 +526,10 @@
         const safeCurrentPage = Math.min(Math.max(1, Number.isFinite(currentPage) ? Math.floor(currentPage) : 1), safeTotalPages);
         const pageStart = (safeCurrentPage - 1) * safeItemsPerPage + 1;
         const pageEnd = Math.min(pageStart + safeItemsPerPage - 1, safeTotal);
+        const titleLabel = safeTotal === 1 ? 'Title' : 'Titles';
 
-        el.textContent = `${pageStart} to ${pageEnd} of ${safeTotal}`;
+        $summary.removeClass('d-none');
+        $summary.text(`Showing ${pageStart} to ${pageEnd} of ${safeTotal} ${titleLabel}`);
     }
 
     function updatePaginationControls(nbDisplayedGames) {
@@ -597,9 +605,9 @@
     function checkIfExistsAndSet(id) {
         const norm = normalizeId(id);
         if (!norm) return;
-        const el = document.getElementById(norm);
-        if (el) $(el).prop('checked', true);
-        }
+        const $el = $(`#${norm}`);
+        if ($el.length) $el.prop('checked', true);
+    }
 
     function loadFiltersFromStorage() {
         let f = null;
