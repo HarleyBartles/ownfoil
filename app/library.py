@@ -828,69 +828,105 @@ def process_library_organization(app, watcher):
     logger.info(f"Library organization process for all libraries completed.")
 
 def remove_outdated_update_files(watcher):
-    logger.info("Starting removal of outdated update files...")
+    logger.info("Starting removal of outdated update and DLC files...")
     try:
         titles = get_all_titles()
-        
+
+        def _remove_files_for_app(app_data, descriptor):
+            app_obj = get_app_by_id_and_version(app_data['app_id'], app_data['app_version'])
+
+            if not app_obj:
+                return
+
+            # Create a list to iterate over as the original collection might change during deletion
+            files_to_process = list(app_obj.files)
+            for file_obj in files_to_process:
+                # Check if file meets criteria: identified, not multicontent
+                if file_obj.identified and not file_obj.multicontent:
+                    logger.info(
+                        f"Removing outdated {descriptor} file: {file_obj.filepath} "
+                        f"(App ID: {app_obj.app_id}, Version: {app_obj.app_version}) - Greater owned version available."
+                    )
+
+                    # Remove from disk
+                    if os.path.exists(file_obj.filepath):
+                        try:
+                            # Add the delete event to the ignored list before performing the remove
+                            with watcher.event_handler.ignored_events_lock:
+                                watcher.event_handler.ignored_events_tuples.add((file_obj.filepath, ""))
+                            os.remove(file_obj.filepath)
+                            logger.debug(f"Deleted physical file: {file_obj.filepath}")
+                            # Remove from database and update app owned status
+                            # This function handles db.session.delete(file_obj) and app.owned status
+                            remove_file_from_apps(file_obj.id)
+                        except OSError as e:
+                            logger.error(f"Error deleting physical file {file_obj.filepath}: {e}")
+                            # If an error occurs, ensure the event is removed from the ignored list
+                            with watcher.event_handler.ignored_events_lock:
+                                if (file_obj.filepath, "") in watcher.event_handler.ignored_events_tuples:
+                                    watcher.event_handler.ignored_events_tuples.remove((file_obj.filepath, ""))
+                    else:
+                        logger.warning(f"Physical file not found for deletion: {file_obj.filepath}")
+
         for title in titles:
             title_apps = get_all_title_apps(title.title_id)
-            
+
             # Filter for owned update apps
             owned_update_apps = [app for app in title_apps if app.get('app_type') == APP_TYPE_UPD and app.get('owned')]
-            
+
             # If there's only one or no owned update apps, there's no "greater version available" to compare against.
-            if len(owned_update_apps) <= 1:
-                continue
-            
-            # Group owned update apps by their version for easy lookup
-            owned_versions = {int(app['app_version']) for app in owned_update_apps}
-            
-            # Iterate through all update apps (owned or not) for this title
-            for app_data in title_apps:
-                if app_data.get('app_type') == APP_TYPE_UPD:
-                    current_app_version = int(app_data['app_version'])
-                    
-                    # Check if there's a greater owned version available for this title
-                    has_greater_owned_version = any(
-                        owned_v > current_app_version for owned_v in owned_versions
-                    )
-                    
-                    if has_greater_owned_version:
-                        # Get the actual App object from the database
-                        app_obj = get_app_by_id_and_version(app_data['app_id'], app_data['app_version'])
-                        
-                        if app_obj:
-                            # Get files associated with this specific app version
-                            # Create a list to iterate over as the original collection might change during deletion
-                            files_to_process = list(app_obj.files) 
-                            for file_obj in files_to_process:
-                                # Check if file meets criteria: identified, not multicontent
-                                if file_obj.identified and not file_obj.multicontent:
-                                    logger.info(f"Removing outdated update file: {file_obj.filepath} (App ID: {app_obj.app_id}, Version: {app_obj.app_version}) - Greater owned version available.")
-                                    
-                                    # Remove from disk
-                                    if os.path.exists(file_obj.filepath):
-                                        try:
-                                            # Add the delete event to the ignored list before performing the remove
-                                            with watcher.event_handler.ignored_events_lock:
-                                                watcher.event_handler.ignored_events_tuples.add((file_obj.filepath, ""))
-                                            os.remove(file_obj.filepath)
-                                            logger.debug(f"Deleted physical file: {file_obj.filepath}")
-                                            # Remove from database and update app owned status
-                                            # This function handles db.session.delete(file_obj) and app.owned status
-                                            remove_file_from_apps(file_obj.id)
-                                        except OSError as e:
-                                            logger.error(f"Error deleting physical file {file_obj.filepath}: {e}")
-                                            # If an error occurs, ensure the event is removed from the ignored list
-                                            with watcher.event_handler.ignored_events_lock:
-                                                if (file_obj.filepath, "") in watcher.event_handler.ignored_events_tuples:
-                                                    watcher.event_handler.ignored_events_tuples.remove((file_obj.filepath, ""))
-                                    else:
-                                        logger.warning(f"Physical file not found for deletion: {file_obj.filepath}")
-                                    
-        logger.info(f"Finished removal of outdated update files.")
+            if len(owned_update_apps) > 1:
+                # Group owned update apps by their version for easy lookup
+                owned_versions = {int(app['app_version']) for app in owned_update_apps}
+
+                # Iterate through all update apps (owned or not) for this title
+                for app_data in title_apps:
+                    if app_data.get('app_type') == APP_TYPE_UPD:
+                        current_app_version = int(app_data['app_version'])
+
+                        # Check if there's a greater owned version available for this title
+                        has_greater_owned_version = any(
+                            owned_v > current_app_version for owned_v in owned_versions
+                        )
+
+                        if has_greater_owned_version:
+                            _remove_files_for_app(app_data, "update")
+
+            # Remove outdated DLC files
+            dlc_apps = [app for app in title_apps if app.get('app_type') == APP_TYPE_DLC]
+
+            if dlc_apps:
+                dlc_by_app_id = {}
+                for app_data in dlc_apps:
+                    app_id = app_data.get('app_id')
+                    if not app_id:
+                        continue
+
+                    dlc_entry = dlc_by_app_id.setdefault(app_id, {"apps": [], "owned_versions": set()})
+                    dlc_entry["apps"].append(app_data)
+
+                    if app_data.get('owned'):
+                        dlc_entry["owned_versions"].add(int(app_data['app_version']))
+
+                for dlc_entry in dlc_by_app_id.values():
+                    owned_versions = dlc_entry["owned_versions"]
+
+                    if len(owned_versions) <= 1:
+                        continue
+
+                    for app_data in dlc_entry["apps"]:
+                        current_app_version = int(app_data['app_version'])
+
+                        has_greater_owned_version = any(
+                            owned_v > current_app_version for owned_v in owned_versions
+                        )
+
+                        if has_greater_owned_version:
+                            _remove_files_for_app(app_data, "DLC")
+
+        logger.info(f"Finished removal of outdated update and DLC files.")
     except Exception as e:
-        logger.error(f"Error during removal of outdated update files: {e}")
+        logger.error(f"Error during removal of outdated update and DLC files: {e}")
 
 def update_titles():
     # Remove titles that no longer have any owned apps
