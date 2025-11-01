@@ -9,27 +9,32 @@ depends_on = None
 
 
 def upgrade():
-    with op.batch_alter_table("app_overrides") as batch_op:
-        batch_op.add_column(
-            sa.Column(
-                "suppress_missing",
-                sa.Boolean(),
-                nullable=False,
-                server_default=sa.text("0"),
-            )
-        )
-        batch_op.drop_column("version")
+    op.add_column(
+        "app_overrides",
+        sa.Column(
+            "suppress_missing",
+            sa.Boolean(),
+            nullable=False,
+            server_default=sa.text("0"),
+        ),
+    )
 
-    # Drop the server default now that existing rows are initialized.
+    op.execute(sa.text("UPDATE app_overrides SET suppress_missing = 0 WHERE suppress_missing IS NULL"))
+
     op.alter_column(
         "app_overrides",
         "suppress_missing",
-        existing_type=sa.Boolean(),
         server_default=None,
+        existing_type=sa.Boolean(),
+        existing_nullable=False,
     )
+
+    op.drop_column("app_overrides", "version")
 
 
 def downgrade():
-    with op.batch_alter_table("app_overrides") as batch_op:
-        batch_op.add_column(sa.Column("version", sa.String(length=64), nullable=True))
-        batch_op.drop_column("suppress_missing")
+    op.add_column(
+        "app_overrides",
+        sa.Column("version", sa.String(length=64), nullable=True),
+    )
+    op.drop_column("app_overrides", "suppress_missing")
