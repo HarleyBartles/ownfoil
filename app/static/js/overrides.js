@@ -588,7 +588,7 @@
 
   const finishOverrideMutationAndRefresh = (modifiedKey) => {
     if (env.getGames) applyOverrideToGamesByKey(modifiedKey, env.getGames());
-    if (env.applyFilters) env.applyFilters();
+    if (env.applyFilters) env.applyFilters({ preservePage: true });
     const modalInstance = overrideModal();
     if (modalInstance) {
       modalInstance.hide();

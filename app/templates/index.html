@@ -157,6 +157,7 @@
 
     <!-- Pagination controls -->
     <nav aria-label="Page navigation" class="mt-3">
+        <div class="pagination-summary text-center text-muted small mb-1" id="paginationSummary" aria-live="polite"></div>
         <ul class="pagination justify-content-center" id="paginationControls"></ul>
     </nav>
 </div>
@@ -449,10 +450,6 @@
         }
     }
 
-    function updatePaginationControls(nbDisplayedGames) {
-        paginationController?.update(nbDisplayedGames);
-    }
-
     function adjustCardSizes() {
         const gameGrid = $('#gameGrid');
         const gameCols = gameGrid.find('.game-col');
@@ -467,6 +464,30 @@
 
         // Update the CSS of the game icons
         $('.game-icon').css('width', `${iconSize}%`);
+    }
+
+    function updatePaginationSummary(totalItems) {
+        const el = document.getElementById('paginationSummary');
+        if (!el) return;
+
+        const safeTotal = Number.isFinite(totalItems) && totalItems > 0 ? Math.floor(totalItems) : 0;
+        const safeItemsPerPage = Math.max(1, Number.isFinite(itemsPerPage) ? Math.floor(itemsPerPage) : 1);
+        if (safeTotal === 0) {
+            el.textContent = '0 to 0 of 0';
+            return;
+        }
+
+        const safeTotalPages = Math.max(1, Math.ceil(safeTotal / safeItemsPerPage));
+        const safeCurrentPage = Math.min(Math.max(1, Number.isFinite(currentPage) ? Math.floor(currentPage) : 1), safeTotalPages);
+        const pageStart = (safeCurrentPage - 1) * safeItemsPerPage + 1;
+        const pageEnd = Math.min(pageStart + safeItemsPerPage - 1, safeTotal);
+
+        el.textContent = `${pageStart} to ${pageEnd} of ${safeTotal}`;
+    }
+
+    function updatePaginationControls(nbDisplayedGames) {
+        paginationController?.update(nbDisplayedGames);
+        updatePaginationSummary(nbDisplayedGames);
     }
 
     // ---- Filters persistence and application ----
@@ -572,8 +593,15 @@
     }
 
     // Function to apply filters and show/hide game cards with animation
-    function applyFilters() {
+    function applyFilters(options = {}) {
         if (!Array.isArray(games)) games = [];
+
+        const preservePage = options?.preservePage === true;
+        const prevPage = currentPage;
+        const prevItemsPerPage = itemsPerPage;
+        const prevTotalItems = Array.isArray(filteredGames) ? filteredGames.length : 0;
+        const safePrevItemsPerPage = Math.max(1, Number.isFinite(prevItemsPerPage) ? prevItemsPerPage : 1);
+        const prevTotalPages = Math.max(1, Math.ceil(prevTotalItems / safePrevItemsPerPage));
 
         if (
             activeTypeFilters.size === 0 &&
@@ -636,9 +664,24 @@
         }
 
         // Now apply SEARCH on top of baseFilteredGames
-        currentPage = 1;
         const term = $('#textFilter').val() || '';
         filteredGames = filterBySearchText(baseFilteredGames, term);
+
+        const newTotalItems = filteredGames.length;
+        const safeItemsPerPage = Math.max(1, Number.isFinite(itemsPerPage) ? itemsPerPage : 1);
+        const newTotalPages = Math.max(1, Math.ceil(newTotalItems / safeItemsPerPage));
+
+        if (preservePage && prevItemsPerPage === itemsPerPage) {
+            const candidatePage = Math.min(Math.max(prevPage, 1), newTotalPages);
+            const pageStillValid = candidatePage === prevPage;
+            if (newTotalPages === prevTotalPages || pageStillValid) {
+                currentPage = candidatePage;
+            } else {
+                currentPage = 1;
+            }
+        } else {
+            currentPage = 1;
+        }
 
         renderGames();
     }
@@ -678,7 +721,7 @@
         if (overridesModule?.bindEnvironment) {
             overridesModule.bindEnvironment({
                 getGames: () => games,
-                applyFilters: () => applyFilters()
+                applyFilters: (options) => applyFilters(options)
             });
         }
         if (overridesModule?.initDomBindings) {
@@ -701,6 +744,7 @@
             getItemsPerPage: () => itemsPerPage,
             onPageChange: () => renderGames()
         });
+        updatePaginationSummary(Array.isArray(filteredGames) ? filteredGames.length : 0);
 
         // Fetch overrides for everyone, then fetch games and fold in redirect/projection data before applying explicit overrides
         const overridesPromise = (overridesModule?.fetchOverrides)
