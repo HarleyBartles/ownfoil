@@ -187,6 +187,47 @@
     let searchDebounceTimer = null;
     // -----------------------
 
+    const CURRENT_PAGE_KEY = 'currentPage';
+
+    function normalizePage(value, fallback = 1) {
+        const num = Number(value);
+        if (!Number.isFinite(num) || num < 1) return fallback;
+        return Math.floor(num);
+    }
+
+    function loadStoredPage() {
+        try {
+            const saved = localStorage.getItem(CURRENT_PAGE_KEY);
+            if (saved === null) return null;
+            return normalizePage(saved, null);
+        } catch {
+            return null;
+        }
+    }
+
+    function persistCurrentPage(page) {
+        try {
+            localStorage.setItem(CURRENT_PAGE_KEY, String(page));
+        } catch {
+            // Ignore storage errors (e.g., private browsing, quota issues)
+        }
+    }
+
+    function setCurrentPageValue(page) {
+        const normalized = normalizePage(page);
+        currentPage = normalized;
+        persistCurrentPage(normalized);
+        return normalized;
+    }
+
+    function clampCurrentPageTo(totalPages) {
+        const safeTotal = Math.max(1, Number.isFinite(totalPages) ? Math.floor(totalPages) : 1);
+        const clamped = Math.min(normalizePage(currentPage), safeTotal);
+        currentPage = clamped;
+        persistCurrentPage(clamped);
+        return clamped;
+    }
+
     function fetchGames() {
         return new Promise((resolve) => {
             $.get(`/api/titles`, function (data) {
@@ -268,8 +309,7 @@
         // Keep the current page within bounds for the available results
         const totalItems = filteredGames.length;
         const totalPages = Math.max(1, Math.ceil(totalItems / itemsPerPage));
-        if (currentPage > totalPages) currentPage = totalPages;
-        if (currentPage < 1) currentPage = 1;
+        clampCurrentPageTo(totalPages);
 
         // Get games for the current page
         const start = (currentPage - 1) * itemsPerPage;
@@ -415,8 +455,7 @@
         const baseGames = filteredGames.filter(game => game.app_type === 'BASE');
         const totalIconItems = baseGames.length;
         const totalIconPages = Math.max(1, Math.ceil(totalIconItems / itemsPerPage));
-        if (currentPage > totalIconPages) currentPage = totalIconPages;
-        if (currentPage < 1) currentPage = 1;
+        clampCurrentPageTo(totalIconPages);
 
         // Get games for the current page
         const start = (currentPage - 1) * itemsPerPage;
@@ -580,7 +619,7 @@
         const savedSearch = localStorage.getItem('searchTerm');
         if (typeof savedSearch === 'string') $('#textFilter').val(savedSearch);
 
-        applyFilters();
+        applyFilters({ preservePage: true });
     }
 
     function findCommonElements(...arrays) {
@@ -673,14 +712,9 @@
 
         if (preservePage && prevItemsPerPage === itemsPerPage) {
             const candidatePage = Math.min(Math.max(prevPage, 1), newTotalPages);
-            const pageStillValid = candidatePage === prevPage;
-            if (newTotalPages === prevTotalPages || pageStillValid) {
-                currentPage = candidatePage;
-            } else {
-                currentPage = 1;
-            }
+            setCurrentPageValue(candidatePage);
         } else {
-            currentPage = 1;
+            setCurrentPageValue(1);
         }
 
         renderGames();
@@ -737,10 +771,13 @@
         const savedCardSize = localStorage.getItem('cardSize');
         if (savedCardSize) cardSize = parseInt(savedCardSize);
 
+        const savedCurrentPage = loadStoredPage();
+        if (savedCurrentPage !== null) currentPage = savedCurrentPage;
+
         paginationController = window.Ownfoil?.Pagination?.create({
             container: '#paginationControls',
             getCurrentPage: () => currentPage,
-            setCurrentPage: (page) => { currentPage = page; },
+            setCurrentPage: (page) => { setCurrentPageValue(page); },
             getItemsPerPage: () => itemsPerPage,
             onPageChange: () => renderGames()
         });
@@ -770,7 +807,7 @@
         $('.items-per-page').click(function () {
             itemsPerPage = $(this).data('value');
             localStorage.setItem('itemsPerPage', itemsPerPage);
-            currentPage = 1; // Reset to first page
+            setCurrentPageValue(1); // Reset to first page
             renderGames();
         });
 
@@ -779,7 +816,7 @@
             if (customValue && customValue > 0) {
                 itemsPerPage = parseInt(customValue);
                 localStorage.setItem('itemsPerPage', itemsPerPage);
-                currentPage = 1; // Reset to first page
+                setCurrentPageValue(1); // Reset to first page
                 renderGames();
             }
         });
