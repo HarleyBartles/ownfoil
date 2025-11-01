@@ -71,9 +71,16 @@
             <input id="ovr-region" type="text" class="form-control" placeholder="US, EU, JP, ...">
           </div>
           <div class="col-4">
-            <label class="form-label">Version</label>
-            <input id="ovr-version" type="number" class="form-control" placeholder="e.g. 10000">
+            <label class="form-label d-block">Version</label>
+            <div id="ovr-version-display" class="form-control-plaintext text-light px-2 py-2 border border-secondary rounded">—</div>
+            <div id="ovr-version-help" class="form-text d-none"></div>
           </div>
+        </div>
+
+        <div class="form-check form-switch mb-3 d-none" id="ovr-suppress-row">
+          <input class="form-check-input" type="checkbox" role="switch" id="ovr-suppress-missing">
+          <label class="form-check-label" for="ovr-suppress-missing">Ghost this DLC when missing files</label>
+          <div class="form-text">Hides missing status and deletions for this DLC but keeps the card visible.</div>
         </div>
 
         <!-- Artwork (previews-only + hidden file inputs) -->

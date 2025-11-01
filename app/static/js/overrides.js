@@ -44,61 +44,11 @@
   // ----------------- Helpers -----------------
   const _trimmedOrNull = (u) => (typeof u === 'string' && u.trim().length) ? u.trim() : null;
   const trimOrNull = (v) => _trimmedOrNull((v ?? '').toString());
-  const numOrNull = (v) => {
-    const t = trimOrNull(v);
-    if (t === null) return null;
-    const n = Number(t);
-    return Number.isFinite(n) ? n : null;
-  };
   const addBuster = (url, buster = 0) =>
     !url || (/^(data:|blob:)/i.test(url)) || !buster
     ? url
     : `${url}${url.includes('?') ? '&' : '?'}b=${buster}`;
   const appKey = (gameOrOverride) => gameOrOverride?.app_id || '';
-
-  // Derive Version for the modal:
-  // - BASE  -> latest OWNED update version (fallback: latest available; fallback: app_version)
-  // - DLC   -> app_version of the DLC itself
-  const deriveTitleDbVersion = (game) => {
-    if (!game) return null;
-
-    const parseNum = (x) => {
-      if (typeof x === 'number' && Number.isFinite(x)) return x;
-      if (typeof x === 'string' && /^\d+$/.test(x))   return Number(x);
-      return null;
-    };
-
-    const type = (game.app_type || '').toUpperCase();
-
-    if (type === 'DLC') {
-      // DLCs: show the app's own version (app_version)
-      return parseNum(game.app_version);
-    }
-
-    // BASE (or anything else): prefer latest OWNED update version
-    const updates = Array.isArray(game.version) ? game.version : [];
-
-    const pickMaxVersion = (arr) => {
-      let max = null;
-      for (const item of arr) {
-        const n = parseNum(item?.version);
-        if (n !== null && (max === null || n > max)) max = n;
-      }
-      return max;
-    };
-
-    if (updates.length) {
-      const owned = updates.filter(u => u && u.owned === true);
-      const maxOwned = owned.length ? pickMaxVersion(owned) : null;
-      if (maxOwned !== null) return maxOwned;
-
-      const maxAny = pickMaxVersion(updates);
-      if (maxAny !== null) return maxAny;
-    }
-
-    // No updates? fall back to the app's own version (often 0 for v0 base)
-    return parseNum(game.app_version);
-  };
 
   // Recognition flags (stable against overrides)
   const computeRecognitionFlags = (game) => {
@@ -214,12 +164,17 @@
         if (ovr.release_date && typeof ovr.release_date === 'string' && ovr.release_date.trim().length) {
           g.release_date = ovr.release_date.trim();
         }
+
+        g.suppressed_missing = ovr.suppress_missing === true;
       } else {
         // Override disabled/absent -> restore originals
         if (g._orig) {
           g.title_id_name = g._orig.title_id_name;
           g.name = g._orig.name;
           g.release_date = g._orig.release_date ?? null;
+          g.suppressed_missing = g._orig.suppressed_missing === true;
+        } else {
+          g.suppressed_missing = false;
         }
       }
     });
@@ -437,7 +392,6 @@
     const tdReleaseDate = trimOrNull(game.release_date);
     const tdRegion      = trimOrNull(game.region);
     const tdDescription = trimOrNull(game.description);
-    const tdVersionNum  = deriveTitleDbVersion(game); // number or null
 
     // Name
     $('#ovr-name').val(pickNameForEdit(game, ovr));
@@ -466,12 +420,69 @@
       .data('origVal', initialDescription ?? '')
       .data('everEdited', false);
 
-    // Version (numeric)
-    const initialVersion = (ovr?.version != null) ? ovr.version : tdVersionNum;
-    $('#ovr-version')
-      .val((initialVersion ?? '') === '' ? '' : String(initialVersion))
-      .data('origVal', (initialVersion ?? '') === '' ? '' : String(initialVersion))
-      .data('everEdited', false);
+    // Version display (latest owned)
+    const normalizeVersion = (value) => {
+      if (typeof value === 'number' && Number.isFinite(value)) return value;
+      if (typeof value === 'string' && /^\d+$/.test(value.trim())) return Number(value.trim());
+      return null;
+    };
+    const versionEntries = Array.isArray(game.version) ? game.version : [];
+    let ownedVersion = null;
+    let availableVersion = null;
+    for (const entry of versionEntries) {
+      const verNum = normalizeVersion(entry?.version);
+      if (verNum === null) continue;
+      if (availableVersion === null || verNum > availableVersion) availableVersion = verNum;
+      if (entry?.owned) {
+        if (ownedVersion === null || verNum > ownedVersion) ownedVersion = verNum;
+      }
+    }
+    const fallbackVersion = normalizeVersion(game.app_version);
+    if (availableVersion === null && fallbackVersion !== null) {
+      availableVersion = fallbackVersion;
+    }
+
+    let versionDisplayText;
+    let versionHelpText = '';
+    if (ownedVersion !== null) {
+      versionDisplayText = `v${ownedVersion}`;
+      if (availableVersion !== null && ownedVersion < availableVersion) {
+        versionHelpText = `Latest available: v${availableVersion}`;
+      }
+    } else if ((game.app_type || '').toUpperCase() === 'BASE' && versionEntries.length === 0 && fallbackVersion !== null) {
+      versionDisplayText = `v${fallbackVersion}`;
+    } else {
+      versionDisplayText = 'Not owned';
+      if (availableVersion !== null) {
+        versionHelpText = `Latest available: v${availableVersion}`;
+      }
+    }
+
+    $('#ovr-version-display').text(versionDisplayText);
+    const $versionHelp = $('#ovr-version-help');
+    if (versionHelpText) {
+      $versionHelp.text(versionHelpText).removeClass('d-none');
+    } else {
+      $versionHelp.text('').addClass('d-none');
+    }
+
+    const $suppressRow = $('#ovr-suppress-row');
+    const $suppressToggle = $('#ovr-suppress-missing');
+    const isDlc = (game.app_type || '').toUpperCase() === 'DLC';
+    const suppressInitial = !!(ovr?.suppress_missing ?? game.suppressed_missing ?? false);
+    if (isDlc) {
+      $suppressRow.removeClass('d-none');
+      $suppressToggle
+        .prop('checked', suppressInitial)
+        .data('origVal', suppressInitial)
+        .data('everEdited', false);
+    } else {
+      $suppressToggle
+        .prop('checked', false)
+        .data('origVal', false)
+        .data('everEdited', false);
+      $suppressRow.addClass('d-none');
+    }
 
     // TID display/edit
     const displayTid = pickTidForDisplay(game, ovr);
@@ -654,22 +665,15 @@
         payload.description = (descVal ?? null);
       }
     }
-
-    // --- Version (number) — send only if edited & changed; allow clearing
-    const $ver = $('#ovr-version');
-    const verEdited = $ver.data('everEdited') === true;
-    const verOrigStr = ($ver.data('origVal') ?? '').toString();
-    const verOrigNum = numOrNull(verOrigStr);
-    const verValNum  = numOrNull($ver.val());
-
-    if (verEdited) {
-      // Note: treat NaN/null as "cleared"
-      const changed =
-        (verValNum === null && verOrigNum !== null) ||
-        (verValNum !== null && verOrigNum === null) ||
-        (verValNum !== null && verOrigNum !== null && verValNum !== verOrigNum);
-      if (changed) {
-        payload.version = (verValNum === null ? null : verValNum);
+    // --- Suppress missing toggle (only for DLCs; send only if edited & changed) ---
+    const $suppress = $('#ovr-suppress-missing');
+    const suppressRowVisible = !$suppress.closest('#ovr-suppress-row').hasClass('d-none');
+    if (suppressRowVisible) {
+      const suppressEdited = $suppress.data('everEdited') === true;
+      const suppressOrig = !!$suppress.data('origVal');
+      const suppressVal = $suppress.is(':checked');
+      if (suppressEdited && suppressVal !== suppressOrig) {
+        payload.suppress_missing = suppressVal;
       }
     }
 
@@ -959,8 +963,8 @@
     // Mark "everEdited" for region/description/version/release_date
     $('#ovr-region').off('input').on('input', function(){ $(this).data('everEdited', true); });
     $('#ovr-description').off('input').on('input', function(){ $(this).data('everEdited', true); });
-    $('#ovr-version').off('input').on('input', function(){ $(this).data('everEdited', true); });
     $('#ov-release-date').off('change input').on('change input', function(){ $(this).data('everEdited', true); });
+    $('#ovr-suppress-missing').off('change').on('change', function(){ $(this).data('everEdited', true); });
 
     // Title ID "click to edit"
     $('#ovTitleIdEditBtn').off('click').on('click', function () {

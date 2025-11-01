@@ -934,6 +934,14 @@ def update_titles():
     if titles_removed > 0:
             logger.info(f"Removed {titles_removed} titles with no owned apps.")
 
+    override_index = build_override_index(include_disabled=False) or {}
+    by_app_override = override_index.get("by_app") if isinstance(override_index, dict) else {}
+    suppressed_app_ids = {
+        (app_id or "").upper()
+        for app_id, payload in (by_app_override or {}).items()
+        if isinstance(payload, dict) and payload.get("suppress_missing")
+    }
+
     titles = get_all_titles()
     for n, title in enumerate(titles):
         have_base = False
@@ -964,8 +972,12 @@ def update_titles():
             up_to_date = highest_owned_version >= highest_available_version
 
         # check complete - latest version of all available DLC are owned
-        available_dlc_apps = [app for app in title_apps if app.get('app_type') == APP_TYPE_DLC]
-        
+        available_dlc_apps = [
+            app for app in title_apps
+            if app.get('app_type') == APP_TYPE_DLC
+            and (app.get('app_id') or '').upper() not in suppressed_app_ids
+        ]
+
         if not available_dlc_apps:
             # No DLC available, consider complete
             complete = True
@@ -1035,6 +1047,36 @@ def _generate_library_snapshot():
         games_info = []
         processed_dlc_apps = set()  # Track processed DLC app_ids to avoid duplicates
 
+        def _normalized_id(value, kind: str) -> str:
+            if not isinstance(value, str):
+                return ""
+            trimmed = value.strip()
+            if not trimmed:
+                return ""
+            try:
+                normalized = normalize_id(trimmed, kind)
+            except Exception:
+                normalized = None
+            if normalized:
+                return normalized.upper()
+            return trimmed.upper()
+
+        override_index = build_override_index(include_disabled=False) or {}
+        raw_overrides = override_index.get("by_app") if isinstance(override_index, dict) else {}
+        overrides_by_app: dict[str, dict] = {}
+        if isinstance(raw_overrides, dict):
+            for raw_app_id, payload in raw_overrides.items():
+                if not isinstance(payload, dict):
+                    continue
+                normalized_app_id = _normalized_id(raw_app_id, "app")
+                if normalized_app_id:
+                    overrides_by_app[normalized_app_id] = payload
+
+        suppressed_app_ids = {
+            app_id for app_id, payload in overrides_by_app.items()
+            if isinstance(payload, dict) and payload.get("suppress_missing")
+        }
+
         for title in titles:
             has_none_value = any(value is None for value in title.values())
             if has_none_value:
@@ -1042,6 +1084,12 @@ def _generate_library_snapshot():
                 continue
             if title['app_type'] == APP_TYPE_UPD:
                 continue
+
+            raw_app_version = title.get('app_version')
+            try:
+                title['app_version'] = int(raw_app_version) if raw_app_version is not None else 0
+            except (TypeError, ValueError):
+                title['app_version'] = 0
 
             # Use DLC app_id for DLC metadata; BASE keeps family/base title_id.
             lookup_id = title['app_id'] if title['app_type'] == APP_TYPE_DLC else title['title_id']
@@ -1082,11 +1130,9 @@ def _generate_library_snapshot():
                     title['has_base'] = title_obj.have_base
                     # Only mark as up to date if the base itself is owned and up_to_date
                     title['has_latest_version'] = (title_obj.have_base and title_obj.up_to_date)
-                    title['has_all_dlcs'] = title_obj.complete
                 else:
                     title['has_base'] = False
                     title['has_latest_version'] = False
-                    title['has_all_dlcs'] = False
 
                 # Version list for BASE using Apps + versions DB release dates
                 title_apps = get_all_title_apps(title['title_id'])
@@ -1105,7 +1151,37 @@ def _generate_library_snapshot():
                         'release_date': rd.isoformat() if isinstance(rd, (datetime.datetime, datetime.date)) else rd
                     })
 
+                if not version_list:
+                    version_list.append({
+                        'version': int(title.get('app_version') or 0),
+                        'owned': bool(title.get('owned', False)),
+                        'release_date': 'Unknown'
+                    })
+
                 title['version'] = sorted(version_list, key=lambda x: x['version'])
+
+                # Recompute DLC completion locally so overrides take effect immediately
+                available_dlc_apps = [
+                    app for app in title_apps
+                    if app.get('app_type') == APP_TYPE_DLC
+                    and (app.get('app_id') or '').upper() not in suppressed_app_ids
+                ]
+
+                if not available_dlc_apps:
+                    title['has_all_dlcs'] = True
+                else:
+                    dlc_by_id = {}
+                    for app in available_dlc_apps:
+                        app_id = app['app_id']
+                        version = int(app['app_version'])
+                        entry = dlc_by_id.setdefault(app_id, {'version': version, 'owned': app.get('owned', False)})
+                        if version > entry['version']:
+                            entry['version'] = version
+                            entry['owned'] = app.get('owned', False)
+                        elif version == entry['version']:
+                            entry['owned'] = entry['owned'] or app.get('owned', False)
+
+                    title['has_all_dlcs'] = all(info['owned'] for info in dlc_by_id.values())
 
             elif title['app_type'] == APP_TYPE_DLC:
                 # Skip if we've already processed this DLC app_id
@@ -1118,6 +1194,8 @@ def _generate_library_snapshot():
                 title_apps = get_all_title_apps(title['title_id'])
                 dlc_apps = [app for app in title_apps if app.get('app_type') == APP_TYPE_DLC and app['app_id'] == app_id]
 
+                title['suppressed_missing'] = (app_id or "").upper() in suppressed_app_ids
+
                 # Create version list for this DLC
                 version_list = []
                 for dlc_app in dlc_apps:
@@ -1125,6 +1203,13 @@ def _generate_library_snapshot():
                         'version': int(dlc_app['app_version']),
                         'owned': dlc_app.get('owned', False),
                         'release_date': 'Unknown'  # DLC release dates not available in versions_db
+                    })
+
+                if not version_list:
+                    version_list.append({
+                        'version': int(title.get('app_version') or 0),
+                        'owned': bool(title.get('owned', False)),
+                        'release_date': 'Unknown'
                     })
 
                 title['version'] = sorted(version_list, key=lambda x: x['version'])
@@ -1148,31 +1233,6 @@ def _generate_library_snapshot():
             games_info.append(title)
 
         _add_files_without_apps(games_info)
-
-        def _normalized_id(value, kind: str) -> str:
-            if not isinstance(value, str):
-                return ""
-            trimmed = value.strip()
-            if not trimmed:
-                return ""
-            try:
-                normalized = normalize_id(trimmed, kind)
-            except Exception:
-                normalized = None
-            if normalized:
-                return normalized.upper()
-            return trimmed.upper()
-
-        override_index = build_override_index(include_disabled=False) or {}
-        raw_overrides = override_index.get("by_app") if isinstance(override_index, dict) else {}
-        overrides_by_app: dict[str, dict] = {}
-        if isinstance(raw_overrides, dict):
-            for raw_app_id, payload in raw_overrides.items():
-                if not isinstance(payload, dict):
-                    continue
-                normalized_app_id = _normalized_id(raw_app_id, "app")
-                if normalized_app_id:
-                    overrides_by_app[normalized_app_id] = payload
 
         def _first_nonempty(*values):
             for val in values:

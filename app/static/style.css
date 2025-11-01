@@ -34,6 +34,21 @@
     /* linear-gradient(to top, rgba(0, 0, 0, 0.7), transparent 50%), */
 }
 
+.suppressed-card {
+    opacity: 0.45;
+    position: relative;
+    transition: opacity .2s ease;
+}
+
+.suppressed-card:hover,
+.suppressed-card:focus-within {
+    opacity: 0.75;
+}
+
+#ovr-version-display {
+    background-color: rgba(255, 255, 255, 0.05);
+}
+
 .card-img {
     mask-image: linear-gradient(to top, rgba(7, 0, 91, 0.71), #001233ed);
     border-bottom-right-radius: 8px;

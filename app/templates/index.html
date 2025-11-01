@@ -244,7 +244,8 @@
                         name: clone.name,
                         title_id_name: clone.title_id_name,
                         release_date: clone.release_date ?? null,
-                        app_type: clone.app_type
+                        app_type: clone.app_type,
+                        suppressed_missing: clone.suppressed_missing === true
                     };
 
                     // remember base title for DLC at fetch-time
@@ -327,6 +328,11 @@
                 .attr('data-title-id', game.title_id || '')
                 .attr('data-file-basename', game.file_basename || '')
                 .attr('data-identification-type', (game.identification_type || '').toLowerCase());
+
+            const isSuppressed = game.suppressed_missing === true;
+            if (isSuppressed) {
+                card.addClass('suppressed-card').attr('data-suppressed-missing', 'true');
+            }
 
             const bannerSrc = Overrides?.bannerUrlFor?.(game) || window.DEFAULT_BANNER;
             const img = $('<img class="card-img">')
@@ -416,6 +422,15 @@
             if (game.has_all_dlcs !== undefined) {
                 const dlcBadge = $('<span class="badge rounded-pill game-tag"></span>').addClass(`text-bg-${game.has_all_dlcs ? 'success' : 'warning'}`).html('<i class="bi bi-box-seam-fill"></i>');
                 tagsContainer.append(dlcBadge);
+            }
+
+            if (isSuppressed) {
+                const suppressedBadge = $('<span class="badge rounded-pill text-bg-secondary game-tag"></span>')
+                    .attr('data-bs-toggle', 'tooltip')
+                    .attr('data-bs-placement', 'top')
+                    .attr('data-bs-title', 'Ignored for completion filters (ghost card)')
+                    .html('<i class="bi bi-eye-slash"></i>');
+                tagsContainer.append(suppressedBadge);
             }
 
             // Override edit pill

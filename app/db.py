@@ -164,7 +164,6 @@ class AppOverrides(db.Model):
     region       = db.Column(db.String(32), nullable=True)
     description  = db.Column(db.Text, nullable=True)
     content_type = db.Column(db.String(64), nullable=True)   # e.g., Base/Update/DLC
-    version      = db.Column(db.String(64), nullable=True)
 
     # ---- Artwork (relative paths under /static/...) ----
     icon_path   = db.Column(db.String(1024), nullable=True)
@@ -172,6 +171,9 @@ class AppOverrides(db.Model):
 
     # ---- Corrected Title ID (for TitleDB lookups/merge only) ----
     corrected_title_id = db.Column(db.String(16), index=True, nullable=True)  # NEW
+
+    # ---- Behaviour flags ----
+    suppress_missing = db.Column(db.Boolean, nullable=False, default=False)
 
     enabled    = db.Column(db.Boolean, nullable=False, default=True)
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.datetime.utcnow)
@@ -196,10 +198,10 @@ class AppOverrides(db.Model):
             'region': self.region,
             'description': self.description,
             'content_type': self.content_type,
-            'version': self.version,
             'icon_path': self.icon_path,
             'banner_path': self.banner_path,
             'corrected_title_id': self.corrected_title_id,
+            'suppress_missing': self.suppress_missing,
             'enabled': self.enabled,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,

@@ -175,7 +175,7 @@ def _build_titledb_from_overrides():
       - DLC override:
           * Keyed by corrected_title_id if provided, else by the DLC's app_id (DLC TitleID).
           * entry["id"] == that same key (use the DLC's own TitleID).
-      - Include any overridden fields: name, version (int), region, releaseDate (yyyymmdd), description, size.
+      - Include any overridden fields: name, region, releaseDate (yyyymmdd), description, size.
       - One node per override; DLCs are NOT nested under the base.
     """
     def _yyyymmdd_int(iso_date_or_none):
@@ -240,7 +240,6 @@ def _build_titledb_from_overrides():
                     redirect_meta_by_app.get(app_id, {}).get("corrected_title_id"),
                 ),
                 "name": it.get("name"),
-                "version": it.get("version"),
                 "region": it.get("region"),
                 "release_date": _first_value(it.get("release_date"), it.get("releaseDate")),
                 "description": it.get("description"),
@@ -263,7 +262,6 @@ def _build_titledb_from_overrides():
             overrides_by_app[app_id_u] = {
                 "corrected_title_id": ov.get("corrected_title_id"),
                 "name": ov.get("name"),
-                "version": ov.get("version"),  # may be None if index doesn't include it
                 "region": ov.get("region"),
                 "release_date": ov.get("release_date"),
                 "description": ov.get("description"),
@@ -361,9 +359,8 @@ def _build_titledb_from_overrides():
         if name:
             entry["name"] = name
 
-        vnum = _version_to_int(_first_value(ov.get("version"), projection.get("version")))
-        if vnum is not None:
-            entry["version"] = vnum
+        vnum = _version_to_int(projection.get("version"))
+        entry["version"] = vnum if vnum is not None else 0
 
         region = _first_value(ov.get("region"), projection.get("region"))
         if region:

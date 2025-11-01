@@ -54,32 +54,48 @@ def compute_overrides_fingerprint_rows() -> list[tuple]:
     rows = (
         db.session.query(
             AppOverrides.id,
-            AppOverrides.updated_at,
             AppOverrides.corrected_title_id,
             AppOverrides.banner_path,
             AppOverrides.icon_path,
             AppOverrides.enabled,
+            AppOverrides.suppress_missing,
+            AppOverrides.name,
+            AppOverrides.release_date,
+            AppOverrides.region,
+            AppOverrides.description,
+            AppOverrides.content_type,
         )
         .order_by(AppOverrides.id.asc())
         .all()
     )
 
     normalized = []
-    for row in rows:
-        updated_at = row[1]
-        if isinstance(updated_at, datetime.datetime):
-            updated_at_str = updated_at.isoformat(timespec="seconds")
-        else:
-            updated_at_str = str(updated_at)
-
+    for (
+        oid,
+        corrected_title_id,
+        banner_path,
+        icon_path,
+        enabled,
+        suppress_missing,
+        name,
+        release_date,
+        region,
+        description,
+        content_type,
+    ) in rows:
         normalized.append(
             (
-                row[0],
-                updated_at_str,
-                row[2] or None,
-                row[3] or None,
-                row[4] or None,
-                bool(row[5]),
+                oid,
+                corrected_title_id or None,
+                banner_path or None,
+                icon_path or None,
+                bool(enabled),
+                bool(suppress_missing),
+                name or None,
+                release_date.isoformat() if isinstance(release_date, datetime.date) else (release_date or None),
+                region or None,
+                description or None,
+                content_type or None,
             )
         )
     return normalized
@@ -121,7 +137,50 @@ def compute_shop_snapshot_hash() -> str:
     from overrides import load_or_generate_overrides_snapshot
 
     overrides_snapshot = load_or_generate_overrides_snapshot() or {}
-    ov_hash = overrides_snapshot.get("hash") or ""
+    payload = overrides_snapshot.get("payload") or {}
+    items = payload.get("items") if isinstance(payload, dict) else None
+    redirects = payload.get("redirects") if isinstance(payload, dict) else None
+
+    def _norm_item(it: dict) -> dict:
+        return {
+            "app_id": (it.get("app_id") or "").strip().upper(),
+            "enabled": bool(it.get("enabled", True)),
+            "corrected_title_id": (it.get("corrected_title_id") or "").strip().upper() or None,
+            "name": it.get("name"),
+            "region": it.get("region"),
+            "release_date": it.get("release_date"),
+            "description": it.get("description"),
+            "banner_path": it.get("banner_path"),
+            "icon_path": it.get("icon_path"),
+            "category": it.get("category"),
+        }
+
+    norm_items = []
+    if isinstance(items, list):
+        for it in items:
+            if isinstance(it, dict):
+                norm_items.append(_norm_item(it))
+    norm_items.sort(key=lambda d: d["app_id"])
+
+    norm_redirects = []
+    if isinstance(redirects, dict):
+        for raw_app_id, data in redirects.items():
+            if not isinstance(data, dict):
+                continue
+            norm_redirects.append({
+                "app_id": (raw_app_id or "").strip().upper(),
+                "corrected_title_id": (data.get("corrected_title_id") or "").strip().upper() or None,
+                "projection": data.get("projection"),
+            })
+    norm_redirects.sort(key=lambda d: d["app_id"])
+
+    ov_hash = hashlib.sha256(
+        json.dumps(
+            {"items": norm_items, "redirects": norm_redirects},
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
 
     library_snapshot = load_json(LIBRARY_CACHE_FILE) or {}
     lib_hash = library_snapshot.get("hash") or ""

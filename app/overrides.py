@@ -18,6 +18,7 @@ from cache import (
     compute_overrides_snapshot_hash,
     regenerate_cache,
     is_overrides_snapshot_current,
+    is_shop_snapshot_current,
 )
 import logging
 logger = logging.getLogger('main')
@@ -56,11 +57,14 @@ def create_override():
 
     data = data or {}
     data.setdefault("enabled", True)
+    data.setdefault("suppress_missing", False)
     if "enabled" in data and isinstance(data["enabled"], str):
         data["enabled"] = data["enabled"].lower() in ("1", "true", "yes", "on")
+    if "suppress_missing" in data and not isinstance(data["suppress_missing"], bool):
+        data["suppress_missing"] = str(data["suppress_missing"]).strip().lower() in ("1", "true", "yes", "on")
 
     # Empty strings → None for text fields
-    for k in ("app_id", "name", "region", "description", "content_type", "version", "icon_path", "banner_path", "release_date", "corrected_title_id"):
+    for k in ("app_id", "name", "region", "description", "content_type", "icon_path", "banner_path", "release_date", "corrected_title_id"):
         if k in data and isinstance(data[k], str) and not data[k].strip():
             data[k] = None
 
@@ -151,11 +155,13 @@ def update_override(oid: int):
 
     if "enabled" in data and isinstance(data["enabled"], str):
         data["enabled"] = data["enabled"].lower() in ("1", "true", "yes", "on")
+    if "suppress_missing" in data and not isinstance(data["suppress_missing"], bool):
+        data["suppress_missing"] = str(data["suppress_missing"]).strip().lower() in ("1", "true", "yes", "on")
 
     # Empty strings → None for text fields
     for k in (
         "name", "region", "description", "content_type",
-        "version", "icon_path", "banner_path", "release_date", "corrected_title_id"
+        "icon_path", "banner_path", "release_date", "corrected_title_id"
     ):
         if k in data and isinstance(data[k], str) and not data[k].strip():
             data[k] = None
@@ -352,6 +358,7 @@ def build_override_index(include_disabled: bool = False) -> dict:
             "app_fk": ov.app_fk,
             "enabled": bool(ov.enabled),
             "corrected_title_id": ov.corrected_title_id,
+            "suppress_missing": bool(ov.suppress_missing),
             # optional extras that can be handy for UI merges (not required):
             "name": ov.name,
             "description": ov.description,
@@ -367,18 +374,22 @@ def _refresh_caches():
     Regenerate overrides + shop caches without blocking the request.
     Falls back to synchronous regeneration if we have no app context.
     """
-    cache_paths = (OVERRIDES_CACHE_FILE, SHOP_CACHE_FILE)
-
     try:
         app = current_app._get_current_object()
     except RuntimeError:
-        regenerate_cache(*cache_paths)
+        regenerate_cache(OVERRIDES_CACHE_FILE)
+        saved_shop = load_json(SHOP_CACHE_FILE, default=None)
+        if not is_shop_snapshot_current(saved_shop):
+            regenerate_cache(SHOP_CACHE_FILE)
         return
 
     def _job():
         with app.app_context():
             try:
-                regenerate_cache(*cache_paths)
+                regenerate_cache(OVERRIDES_CACHE_FILE)
+                saved_shop = load_json(SHOP_CACHE_FILE, default=None)
+                if not is_shop_snapshot_current(saved_shop):
+                    regenerate_cache(SHOP_CACHE_FILE)
             except Exception:
                 logger.exception("Background cache regeneration failed.")
 
@@ -423,8 +434,8 @@ def _parse_payload():
 def _apply_fields(ov: AppOverrides, data: dict):
     # Only touch known fields; ignore extras to keep it robust.
     fields = [
-        "name", "release_date", "region", "description", "content_type", "version",
-        "enabled", "corrected_title_id",
+        "name", "release_date", "region", "description", "content_type",
+        "enabled", "corrected_title_id", "suppress_missing",
     ]
     for f in fields:
         if f in data:
