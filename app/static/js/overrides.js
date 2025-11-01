@@ -505,8 +505,24 @@
     // Version display (latest owned)
     const normalizeVersion = (value) => {
       if (typeof value === 'number' && Number.isFinite(value)) return value;
-      if (typeof value === 'string' && /^\d+$/.test(value.trim())) return Number(value.trim());
+      if (typeof value === 'string') {
+        const trimmed = value.trim();
+        if (!trimmed) return null;
+        if (/^0x[0-9a-f]+$/i.test(trimmed)) return Number.parseInt(trimmed, 16);
+        if (/^v?\d+$/i.test(trimmed)) return Number.parseInt(trimmed.replace(/^v/i, ''), 10);
+      }
       return null;
+    };
+    const isOwnedFlag = (value) => {
+      if (value === true) return true;
+      if (value === false || value == null) return false;
+      if (typeof value === 'number') return value !== 0;
+      if (typeof value === 'string') {
+        const normalized = value.trim().toLowerCase();
+        if (!normalized) return false;
+        return ['1', 'true', 'yes', 'owned'].includes(normalized);
+      }
+      return false;
     };
     const versionEntries = Array.isArray(game.version) ? game.version : [];
     let ownedVersion = null;
@@ -515,26 +531,29 @@
       const verNum = normalizeVersion(entry?.version);
       if (verNum === null) continue;
       if (availableVersion === null || verNum > availableVersion) availableVersion = verNum;
-      if (entry?.owned) {
+      if (isOwnedFlag(entry?.owned)) {
         if (ownedVersion === null || verNum > ownedVersion) ownedVersion = verNum;
       }
     }
     const fallbackVersion = normalizeVersion(game.app_version);
-    if (availableVersion === null && fallbackVersion !== null) {
-      availableVersion = fallbackVersion;
+    const fallbackOwned = isOwnedFlag(game?.owned);
+    if (fallbackVersion !== null) {
+      if (fallbackOwned && (ownedVersion === null || fallbackVersion > ownedVersion)) {
+        ownedVersion = fallbackVersion;
+      }
+      if (availableVersion === null) {
+        availableVersion = fallbackVersion;
+      }
     }
 
-    let versionDisplayText;
+    let versionDisplayText = 'Not Owned';
     let versionHelpText = '';
     if (ownedVersion !== null) {
       versionDisplayText = `v${ownedVersion}`;
       if (availableVersion !== null && ownedVersion < availableVersion) {
         versionHelpText = `Latest available: v${availableVersion}`;
       }
-    } else if ((game.app_type || '').toUpperCase() === 'BASE' && versionEntries.length === 0 && fallbackVersion !== null) {
-      versionDisplayText = `v${fallbackVersion}`;
     } else {
-      versionDisplayText = 'Not owned';
       if (availableVersion !== null) {
         versionHelpText = `Latest available: v${availableVersion}`;
       }
