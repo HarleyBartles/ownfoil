@@ -12,11 +12,30 @@
 
         <!-- Title ID (inline display with click-to-edit) -->
         <div class="mb-2" id="ovTitleIdRow">
-            <label class="form-label me-2 mb-0">Title ID</label>
-            <span id="ovTitleIdDisplay" class="text-monospace me-2"></span>
-            <button type="button" id="ovTitleIdEditBtn" class="btn btn-sm btn-outline-secondary">
-                Click to edit
-            </button>
+            <div class="d-flex flex-wrap align-items-center gap-2">
+              <div class="d-flex align-items-center gap-2 flex-wrap">
+                <label class="form-label me-2 mb-0">Title ID</label>
+                <span id="ovTitleIdDisplay" class="text-monospace"></span>
+                <button type="button" id="ovTitleIdEditBtn" class="btn btn-sm btn-outline-secondary">
+                    Click to edit
+                </button>
+              </div>
+              <div id="ovr-ghost-toggle" class="d-none ms-auto d-flex align-items-center gap-2">
+                <span class="small text-uppercase text-secondary fw-semibold">Ghost</span>
+                <div class="form-check form-switch m-0">
+                  <input
+                    class="form-check-input"
+                    type="checkbox"
+                    role="switch"
+                    id="ovr-suppress-missing"
+                    data-bs-toggle="tooltip"
+                    data-bs-placement="bottom"
+                    data-bs-title="Ignore missing files for this DLC while keeping the card visible."
+                  >
+                  <label class="visually-hidden" for="ovr-suppress-missing">Ghost this DLC when missing files</label>
+                </div>
+              </div>
+            </div>
 
             <!-- Hidden edit row; appears only when editing -->
             <div id="ovTitleIdEditRow" class="mt-2 d-none">
@@ -75,12 +94,6 @@
             <div id="ovr-version-display" class="form-control-plaintext text-light px-2 py-2 border border-secondary rounded">—</div>
             <div id="ovr-version-help" class="form-text d-none"></div>
           </div>
-        </div>
-
-        <div class="form-check form-switch mb-3 d-none" id="ovr-suppress-row">
-          <input class="form-check-input" type="checkbox" role="switch" id="ovr-suppress-missing">
-          <label class="form-check-label" for="ovr-suppress-missing">Ghost this DLC when missing files</label>
-          <div class="form-text">Hides missing status and deletions for this DLC but keeps the card visible.</div>
         </div>
 
         <!-- Artwork (previews-only + hidden file inputs) -->

@@ -14,3 +14,8 @@ data
 
 # pyenv
 .python-version
+
+# local dev
+docker-compose.override.yml
+CaddyFile
+launch.json

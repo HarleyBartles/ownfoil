@@ -387,7 +387,19 @@
             const typeBadge = $(`<span class="badge rounded-pill ${typeBadgeClass} game-tag"></span>`).text(game.app_type);
             tagsContainer.append(typeBadge);
 
-            if (game.has_latest_version !== undefined) {
+            if (game.has_all_dlcs !== undefined) {
+                const dlcBadge = $('<span class="badge rounded-pill game-tag"></span>').addClass(`text-bg-${game.has_all_dlcs ? 'success' : 'warning'}`).html('<i class="bi bi-box-seam-fill"></i>');
+                tagsContainer.append(dlcBadge);
+            }
+
+            if (isSuppressed) {
+                const suppressedBadge = $('<span class="badge rounded-pill text-bg-secondary game-tag"></span>')
+                    .attr('data-bs-toggle', 'tooltip')
+                    .attr('data-bs-placement', 'top')
+                    .attr('data-bs-title', 'Ignored for completion filters (ghost card)')
+                    .html('<i class="bi bi-eye-slash"></i>');
+                tagsContainer.append(suppressedBadge);
+            } else if (game.has_latest_version !== undefined) {
                 const versionBadge = $(`<span class="badge rounded-pill game-tag version-tag" title="${game.name} [${game.title_id}] Updates"></span>`)
                     .addClass(`text-bg-${game.has_latest_version ? 'success' : 'warning'}`)
                     .html(`<i class="bi ${game.has_latest_version ? 'bi-check-circle-fill' : 'bi-arrow-down-circle'}"></i>`);
@@ -405,7 +417,6 @@
                         .attr('data-bs-html', 'true')
                         .css('cursor', 'pointer');
                 } else {
-                    // version tooltip on hover
                     versionBadge
                         .attr("data-bs-toggle", "tooltip")
                         .attr("data-bs-placement", "top");
@@ -417,20 +428,6 @@
                     }
                 }
                 tagsContainer.append(versionBadge);
-            }
-
-            if (game.has_all_dlcs !== undefined) {
-                const dlcBadge = $('<span class="badge rounded-pill game-tag"></span>').addClass(`text-bg-${game.has_all_dlcs ? 'success' : 'warning'}`).html('<i class="bi bi-box-seam-fill"></i>');
-                tagsContainer.append(dlcBadge);
-            }
-
-            if (isSuppressed) {
-                const suppressedBadge = $('<span class="badge rounded-pill text-bg-secondary game-tag"></span>')
-                    .attr('data-bs-toggle', 'tooltip')
-                    .attr('data-bs-placement', 'top')
-                    .attr('data-bs-title', 'Ignored for completion filters (ghost card)')
-                    .html('<i class="bi bi-eye-slash"></i>');
-                tagsContainer.append(suppressedBadge);
             }
 
             // Override edit pill

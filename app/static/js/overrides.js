@@ -180,11 +180,93 @@
     });
   };
 
+  const normalizeVersionNumber = (value) => {
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (/^\d+$/.test(trimmed)) return Number(trimmed);
+    }
+    return 0;
+  };
+
+  const recomputeBaseDlcCompletion = (baseGame, allGames) => {
+    if (!baseGame || !Array.isArray(allGames)) return;
+
+    const baseTitleId = (baseGame.title_id || '').toUpperCase();
+    const basePrefix = ((baseGame.app_id || '').toUpperCase()).slice(0, 12);
+
+    const relatedDlcs = allGames.filter(g => {
+      if (!g || (g.app_type || '').toUpperCase() !== 'DLC') return false;
+      const dlcTitleId = (g.title_id || '').toUpperCase();
+      const dlcAppId = (g.app_id || '').toUpperCase();
+      if (baseTitleId && dlcTitleId === baseTitleId) return true;
+      if (basePrefix && dlcAppId.startsWith(basePrefix)) return true;
+      return false;
+    });
+
+    const activeDlcs = relatedDlcs.filter(d => d && d.suppressed_missing !== true);
+    if (activeDlcs.length === 0) {
+      baseGame.has_all_dlcs = true;
+      return;
+    }
+
+    const latestByAppId = new Map();
+    activeDlcs.forEach(dlc => {
+      const dlcAppId = (dlc.app_id || '').toUpperCase();
+      if (!dlcAppId) return;
+      const version = normalizeVersionNumber(dlc.app_version);
+      const owned = dlc.owned === true;
+
+      const existing = latestByAppId.get(dlcAppId);
+      if (!existing || version > existing.version) {
+        latestByAppId.set(dlcAppId, { version, owned });
+      } else if (version === existing.version) {
+        existing.owned = existing.owned || owned;
+      }
+    });
+
+    if (latestByAppId.size === 0) {
+      baseGame.has_all_dlcs = true;
+      return;
+    }
+
+    baseGame.has_all_dlcs = Array.from(latestByAppId.values()).every(entry => entry.owned === true);
+  };
+
+  const recomputeBaseCompletionForKey = (key, games) => {
+    if (!key || !Array.isArray(games)) return;
+    const keyUpper = (key || '').toString().toUpperCase();
+    if (!keyUpper) return;
+    const target = games.find(g => (appKey(g) || '').toUpperCase() === keyUpper);
+    if (!target) return;
+
+    let base = target;
+    if ((target.app_type || '').toUpperCase() !== 'BASE') {
+      base = findBaseForDlc(target, games);
+    }
+    if (!base) return;
+
+    recomputeBaseDlcCompletion(base, games);
+  };
+
+  const recomputeAllBaseCompletion = (games) => {
+    if (!Array.isArray(games)) return;
+    const seen = new Set();
+    games.forEach(game => {
+      if ((game.app_type || '').toUpperCase() !== 'BASE') return;
+      const key = appKey(game);
+      if (!key || seen.has(key)) return;
+      seen.add(key);
+      recomputeBaseDlcCompletion(game, games);
+    });
+  };
+
   const reapplyAllOverridesToGames = (games) => {
     if (!Array.isArray(games)) return;
     const keys = new Set();
     games.forEach(g => keys.add(appKey(g)));
     keys.forEach(k => applyOverrideToGamesByKey(k, games));
+    recomputeAllBaseCompletion(games);
   }
 
   // Redirect helpers
@@ -466,22 +548,40 @@
       $versionHelp.text('').addClass('d-none');
     }
 
-    const $suppressRow = $('#ovr-suppress-row');
+    const $ghostWrap = $('#ovr-ghost-toggle');
     const $suppressToggle = $('#ovr-suppress-missing');
     const isDlc = (game.app_type || '').toUpperCase() === 'DLC';
+    const isOwned = game.owned === true;
     const suppressInitial = !!(ovr?.suppress_missing ?? game.suppressed_missing ?? false);
-    if (isDlc) {
-      $suppressRow.removeClass('d-none');
+    const showGhostToggle = isDlc && !isOwned;
+
+    if (showGhostToggle) {
+      $ghostWrap.removeClass('d-none');
       $suppressToggle
         .prop('checked', suppressInitial)
         .data('origVal', suppressInitial)
         .data('everEdited', false);
+      try {
+        const el = $suppressToggle.get(0);
+        if (el && window.bootstrap?.Tooltip) window.bootstrap.Tooltip.getOrCreateInstance(el);
+      } catch {
+        // noop
+      }
     } else {
+      try {
+        const el = $suppressToggle.get(0);
+        if (el && window.bootstrap?.Tooltip) {
+          const inst = window.bootstrap.Tooltip.getInstance(el);
+          inst?.dispose();
+        }
+      } catch {
+        // noop
+      }
       $suppressToggle
         .prop('checked', false)
         .data('origVal', false)
         .data('everEdited', false);
-      $suppressRow.addClass('d-none');
+      $ghostWrap.addClass('d-none');
     }
 
     // TID display/edit
@@ -598,7 +698,11 @@
   }
 
   const finishOverrideMutationAndRefresh = (modifiedKey) => {
-    if (env.getGames) applyOverrideToGamesByKey(modifiedKey, env.getGames());
+    if (env.getGames) {
+      const games = env.getGames();
+      applyOverrideToGamesByKey(modifiedKey, games);
+      recomputeBaseCompletionForKey(modifiedKey, games);
+    }
     if (env.applyFilters) env.applyFilters({ preservePage: true });
     const modalInstance = overrideModal();
     if (modalInstance) {
@@ -667,8 +771,8 @@
     }
     // --- Suppress missing toggle (only for DLCs; send only if edited & changed) ---
     const $suppress = $('#ovr-suppress-missing');
-    const suppressRowVisible = !$suppress.closest('#ovr-suppress-row').hasClass('d-none');
-    if (suppressRowVisible) {
+    const suppressVisible = !$('#ovr-ghost-toggle').hasClass('d-none');
+    if (suppressVisible) {
       const suppressEdited = $suppress.data('everEdited') === true;
       const suppressOrig = !!$suppress.data('origVal');
       const suppressVal = $suppress.is(':checked');
@@ -797,6 +901,16 @@
     }
 
     bumpBuster(app_id);
+    if (env.getGames) {
+      const games = env.getGames();
+      const target = games.find(g => (appKey(g) || '').toUpperCase() === (app_id || '').toUpperCase());
+      if (target) {
+        target.suppressed_missing = false;
+        if (target._orig) target._orig.suppressed_missing = false;
+      }
+      const base = findBaseForDlc(target, games);
+      if (base) recomputeBaseDlcCompletion(base, games);
+    }
     finishOverrideMutationAndRefresh(app_id);
   }
 

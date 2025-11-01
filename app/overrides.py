@@ -135,6 +135,7 @@ def create_override():
     ov.updated_at = datetime.datetime.utcnow()
 
     db.session.add(ov)
+
     try:
         db.session.commit()
         _refresh_caches()
@@ -368,6 +369,7 @@ def build_override_index(include_disabled: bool = False) -> dict:
         }
 
     return {"by_app": by_app, "count": len(by_app)}
+
 
 def _refresh_caches():
     """
