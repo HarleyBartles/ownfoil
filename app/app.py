@@ -306,6 +306,8 @@ def tinfoil_access(f):
     return _tinfoil_access
 
 def access_shop():
+    # Ensure we render with the latest on-disk configuration (e.g., shop display toggles)
+    reload_conf()
     return render_template(
         'index.html',
         title='Library',
