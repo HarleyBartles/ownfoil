@@ -14,6 +14,9 @@
   const DEFAULT_BANNER = () => window.DEFAULT_BANNER || `https://placehold.co/400x225/png?text=${encodeURIComponent(PLACEHOLDER_TEXT())}`;
   const DEFAULT_ICON   = () => window.DEFAULT_ICON   || `https://placehold.co/400x400/png?text=${encodeURIComponent(PLACEHOLDER_TEXT())}`;
 
+  const cacheHelpers = namespace.Cache || null;
+  const cacheKeys = namespace.CacheKeys || {};
+
   // Forces browsers to refetch updated artwork after saves/resets
   const ARTWORK_BUSTERS = new Map(); // app_id -> integer
   const getBuster = (appId) => ARTWORK_BUSTERS.get(appId) || 0;
@@ -49,6 +52,15 @@
     ? url
     : `${url}${url.includes('?') ? '&' : '?'}b=${buster}`;
   const appKey = (gameOrOverride) => gameOrOverride?.app_id || '';
+  const notifyOverridesObservers = () => {
+    const handler = namespace.onOverridesUpdated;
+    if (typeof handler !== 'function') return;
+    try {
+      handler();
+    } catch {
+      // Ignore observer failures to avoid breaking UI flows.
+    }
+  };
 
   // Recognition flags (stable against overrides)
   const computeRecognitionFlags = (game) => {
@@ -177,7 +189,41 @@
           g.suppressed_missing = false;
         }
       }
-      g._searchBlob = null;
+
+      const metadataEntry =
+        g._metadataEntry ||
+        (typeof namespace.Metadata?.getEntry === 'function'
+          ? namespace.Metadata.getEntry(key)
+          : null);
+
+      if (metadataEntry && typeof metadataEntry.search === 'string') {
+        g._searchBlob = metadataEntry.search;
+      } else {
+        g._searchBlob = null;
+      }
+
+      if (metadataEntry && Array.isArray(metadataEntry.sort)) {
+        g._sortTuple = metadataEntry.sort.slice();
+      }
+
+      if (metadataEntry && typeof metadataEntry.display_title === 'string') {
+        g.display_title = metadataEntry.display_title;
+        if (type === 'DLC') {
+          g.base_name = metadataEntry.display_title;
+        }
+      }
+
+      if (metadataEntry && Array.isArray(metadataEntry.search_tokens)) {
+        g._searchTokens = metadataEntry.search_tokens.slice();
+      } else if (!metadataEntry) {
+        g._searchTokens = null;
+      }
+
+      if (metadataEntry && Array.isArray(metadataEntry.description_search_tokens)) {
+        g._descriptionSearchTokens = metadataEntry.description_search_tokens.slice();
+      } else {
+        g._descriptionSearchTokens = null;
+      }
     });
   };
 
@@ -311,15 +357,26 @@
   // ----------------- Fetching -----------------
     const fetchOverrides = async () => {
       try {
-        const list = await $.ajax({
-          url: '/api/overrides',
-          method: 'GET',
-          dataType: 'json',
-          ifModified: true
-        });
+        let list = null;
+        if (cacheHelpers?.conditionalFetch) {
+          const result = await cacheHelpers.conditionalFetch({
+            url: '/api/overrides',
+            storageKey: cacheKeys.overrides || 'ownfoil.cache.overrides.v1',
+            allowStaleFallback: true,
+          });
+          list = result?.data || null;
+        } else {
+          list = await $.ajax({
+            url: '/api/overrides',
+            method: 'GET',
+            dataType: 'json',
+            ifModified: true,
+          });
+        }
 
-        // If 304, jQuery resolves but `list` can be undefined/null → no change
-        if (!list) return { overridesChanged: false, redirectsChanged: false };
+        if (!list || typeof list !== 'object') {
+          return { overridesChanged: false, redirectsChanged: false };
+        }
 
         overridesByKey.clear();
         (Array.isArray(list.items) ? list.items : []).forEach(o => {
@@ -327,13 +384,12 @@
           if (k) overridesByKey.set(k, o);
         });
 
-        // load redirects
         redirectsByAppId.clear();
-        const r = list && list.redirects && typeof list.redirects === 'object' ? list.redirects : null;
-        if (r) {
-          Object.entries(r).forEach(([appId, val]) => {
+        const redirects = (list.redirects && typeof list.redirects === 'object') ? list.redirects : null;
+        if (redirects) {
+          Object.entries(redirects).forEach(([appId, val]) => {
             if (!appId) return;
-            if (val && (typeof val === 'object') && (val.corrected_title_id || val.projection)) {
+            if (val && typeof val === 'object' && (val.corrected_title_id || val.projection)) {
               redirectsByAppId.set(appId, {
                 corrected_title_id: val.corrected_title_id || null,
                 projection: (val.projection && typeof val.projection === 'object') ? val.projection : null
@@ -342,13 +398,17 @@
           });
         }
 
-        // if some other view uses reapply immediately:
         if (env.getGames) reapplyAllOverridesToGames(env.getGames());
-        
-        return { overridesChanged: true, redirectsChanged: true };
+        notifyOverridesObservers();
+
+        return {
+          overridesChanged: true,
+          redirectsChanged: true,
+        };
       } catch (e) {
         overridesByKey.clear();
         redirectsByAppId.clear();
+        return { overridesChanged: false, redirectsChanged: false };
       }
     };
 
@@ -888,6 +948,7 @@
           if (g) g.recognized_via_correction = true;
         }
         finishOverrideMutationAndRefresh(key);
+        notifyOverridesObservers();
         return;
       }
     }
@@ -914,10 +975,12 @@
 
     const app_id = $('#ovr-app-id').val().trim();
 
+    let usedFetchOverrides = false;
     if (app_id && overridesByKey.has(app_id)) {
       overridesByKey.delete(app_id);
     } else {
       await fetchOverrides();
+      usedFetchOverrides = true;
     }
 
     bumpBuster(app_id);
@@ -932,6 +995,7 @@
       if (base) recomputeBaseDlcCompletion(base, games);
     }
     finishOverrideMutationAndRefresh(app_id);
+    if (!usedFetchOverrides) notifyOverridesObservers();
   }
 
   // ----------------- DOM bindings for modal & DnD -----------------

@@ -5,7 +5,16 @@ import logging
 import os
 from typing import Callable, Dict, Optional
 
-from constants import LIBRARY_CACHE_FILE, LIBRARY_SNAPSHOT_VERSION, OVERRIDES_CACHE_FILE, SHOP_CACHE_FILE
+from constants import (
+    CACHE_MAX_AGE_SECONDS,
+    LIBRARY_CACHE_FILE,
+    LIBRARY_METADATA_CACHE_FILE,
+    LIBRARY_METADATA_SNAPSHOT_VERSION,
+    LIBRARY_SNAPSHOT_VERSION,
+    OVERRIDES_CACHE_FILE,
+    OVERRIDES_SNAPSHOT_VERSION,
+    SHOP_CACHE_FILE,
+)
 from db import AppOverrides, Files, db, get_all_apps
 from utils import load_json
 import titles as titles_lib
@@ -31,23 +40,40 @@ def compute_library_apps_hash() -> str:
     return hash_md5.hexdigest()
 
 
+def _snapshot_current(
+    saved: Optional[dict],
+    *,
+    expected_version: int,
+    current_hash_func,
+    extra_checks: Optional[Callable[[dict], bool]] = None,
+) -> bool:
+    if not saved or not saved.get("hash"):
+        return False
+    if saved.get("snapshot_version") != expected_version:
+        return False
+    if not _snapshot_recent_enough(saved):
+        return False
+    if saved.get("hash") != current_hash_func():
+        return False
+    if extra_checks and not extra_checks(saved):
+        return False
+    return True
+
+
 def is_library_snapshot_current(saved_library: Optional[dict]) -> bool:
-    if not saved_library or not saved_library.get("hash"):
-        return False
+    def _extra(saved: dict) -> bool:
+        current_tdb = titles_lib.get_titledb_commit_hash() or ""
+        saved_tdb = saved.get("titledb_commit")
+        if saved_tdb is None:
+            return False
+        return saved_tdb == current_tdb
 
-    if saved_library.get("snapshot_version") != LIBRARY_SNAPSHOT_VERSION:
-        return False
-
-    current_apps_hash = compute_library_apps_hash()
-    if saved_library.get("hash") != current_apps_hash:
-        return False
-
-    current_tdb = titles_lib.get_titledb_commit_hash() or ""
-    saved_tdb = saved_library.get("titledb_commit")
-    if saved_tdb is None:
-        return False
-
-    return saved_tdb == current_tdb
+    return _snapshot_current(
+        saved_library,
+        expected_version=LIBRARY_SNAPSHOT_VERSION,
+        current_hash_func=compute_library_apps_hash,
+        extra_checks=_extra,
+    )
 
 
 def compute_overrides_fingerprint_rows() -> list[tuple]:
@@ -112,12 +138,31 @@ def compute_overrides_snapshot_hash() -> str:
 
 
 def is_overrides_snapshot_current(saved_snapshot: Optional[dict]) -> bool:
-    if not saved_snapshot or not isinstance(saved_snapshot, dict):
-        return False
-    stored_hash = saved_snapshot.get("hash")
-    if not stored_hash:
-        return False
-    return stored_hash == compute_overrides_snapshot_hash()
+    return _snapshot_current(
+        saved_snapshot,
+        expected_version=OVERRIDES_SNAPSHOT_VERSION,
+        current_hash_func=compute_overrides_snapshot_hash,
+    )
+
+
+def compute_library_metadata_snapshot_hash() -> str:
+    payload_for_hash = {
+        "library_hash": compute_library_apps_hash(),
+        "overrides_hash": compute_overrides_snapshot_hash(),
+        "titledb_commit": titles_lib.get_titledb_commit_hash(),
+        "snapshot_version": LIBRARY_METADATA_SNAPSHOT_VERSION,
+    }
+    return hashlib.sha256(
+        json.dumps(payload_for_hash, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def is_library_metadata_snapshot_current(saved_snapshot: Optional[dict]) -> bool:
+    return _snapshot_current(
+        saved_snapshot,
+        expected_version=LIBRARY_METADATA_SNAPSHOT_VERSION,
+        current_hash_func=compute_library_metadata_snapshot_hash,
+    )
 
 
 def compute_shop_files_fingerprint_rows() -> list[tuple[int, int, str]]:
@@ -208,6 +253,7 @@ def is_shop_snapshot_current(saved_snapshot: Optional[dict]) -> bool:
 
 _CACHE_VALIDATORS: Dict[str, CacheValidator] = {
     LIBRARY_CACHE_FILE: is_library_snapshot_current,
+    LIBRARY_METADATA_CACHE_FILE: is_library_metadata_snapshot_current,
     OVERRIDES_CACHE_FILE: is_overrides_snapshot_current,
     SHOP_CACHE_FILE: is_shop_snapshot_current,
 }
@@ -223,6 +269,11 @@ def generate_snapshot(path: str):
 
             load_or_generate_library_snapshot()
             logger.info(f"Regenerated library snapshot: {path}")
+        elif path == LIBRARY_METADATA_CACHE_FILE:
+            from metadata import load_or_generate_library_metadata_snapshot
+
+            load_or_generate_library_metadata_snapshot()
+            logger.info(f"Regenerated library metadata snapshot: {path}")
         elif path == OVERRIDES_CACHE_FILE:
             from overrides import load_or_generate_overrides_snapshot
 
@@ -263,7 +314,7 @@ def regenerate_all_caches():
     """
     Ensure all known cache snapshots are up-to-date without forcing rebuilds.
     """
-    for path in (LIBRARY_CACHE_FILE, OVERRIDES_CACHE_FILE, SHOP_CACHE_FILE):
+    for path in (LIBRARY_CACHE_FILE, LIBRARY_METADATA_CACHE_FILE, OVERRIDES_CACHE_FILE, SHOP_CACHE_FILE):
         validator = _CACHE_VALIDATORS.get(path)
         if not validator:
             logger.warning(f"No validator registered for {path}; forcing regeneration.")
@@ -283,3 +334,18 @@ def regenerate_all_caches():
 
         logger.info(f"Refreshing {name}")
         generate_snapshot(path)
+
+def _snapshot_recent_enough(saved: Optional[dict]) -> bool:
+    if not isinstance(saved, dict):
+        return False
+    stamp = saved.get("generated_at")
+    if not isinstance(stamp, str):
+        return False
+    try:
+        generated = datetime.datetime.fromisoformat(stamp)
+    except Exception:
+        return False
+    if generated.tzinfo is not None:
+        generated = generated.astimezone(datetime.timezone.utc).replace(tzinfo=None)
+    age = datetime.datetime.utcnow() - generated
+    return age.total_seconds() <= CACHE_MAX_AGE_SECONDS

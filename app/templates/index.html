@@ -170,6 +170,7 @@
 {% if current_user.is_authenticated and current_user.is_admin %}
   {% include 'override_modal.html' %}
 {% endif %}
+<script src="{{ url_for('static', filename='js/cache.js') }}"></script>
 <script src="{{ url_for('static', filename='js/overrides.js') }}"></script>
 <script src="{{ url_for('static', filename='js/pagination.js') }}"></script>
 
@@ -212,6 +213,162 @@
     // -----------------------
 
     const CURRENT_PAGE_KEY = 'currentPage';
+    const CacheHelpers = window.Ownfoil?.Cache || null;
+    const CacheKeys = window.Ownfoil?.CacheKeys || {};
+    const SearchConfig = window.Ownfoil.SearchConfig = window.Ownfoil.SearchConfig || {};
+    if (typeof SearchConfig.includeDescriptions !== 'boolean') {
+        SearchConfig.includeDescriptions = false;
+    }
+    const shouldIncludeDescriptionSearch = () => window.Ownfoil?.SearchConfig?.includeDescriptions === true;
+
+    let metadataEntries = {};
+    let baseDisplayByPrefix = {};
+    let metadataReady = false;
+    let suppressNextOverridesMetadataRefresh = false;
+
+    function normalizeAppId(value) {
+        if (typeof value !== 'string') value = (value ?? '').toString();
+        const trimmed = value.trim();
+        return trimmed ? trimmed.toUpperCase() : '';
+    }
+
+    function compareSortTuples(aTuple, bTuple) {
+        if (!Array.isArray(aTuple) || !Array.isArray(bTuple)) return 0;
+        const len = Math.max(aTuple.length, bTuple.length);
+        for (let i = 0; i < len; i += 1) {
+            const av = aTuple[i];
+            const bv = bTuple[i];
+            if (av === bv) continue;
+            if (typeof av === 'number' && typeof bv === 'number') {
+                const diff = av - bv;
+                if (diff !== 0) return diff;
+                continue;
+            }
+            const aStr = (av ?? '').toString();
+            const bStr = (bv ?? '').toString();
+            if (aStr < bStr) return -1;
+            if (aStr > bStr) return 1;
+        }
+        return 0;
+    }
+
+    function sortGamesInPlace(list) {
+        if (!Array.isArray(list) || list.length < 2) return;
+        list.sort((a, b) => {
+            const cmp = compareSortTuples(a?._sortTuple, b?._sortTuple);
+            if (cmp !== 0) return cmp;
+            const aName = ((a?.display_title) || a?.title_id_name || a?.name || '').toString().toUpperCase();
+            const bName = ((b?.display_title) || b?.title_id_name || b?.name || '').toString().toUpperCase();
+            if (aName < bName) return -1;
+            if (aName > bName) return 1;
+            return 0;
+        });
+    }
+
+    function applyMetadataPayload(payload) {
+        if (!payload || typeof payload !== 'object') {
+            metadataEntries = {};
+            baseDisplayByPrefix = {};
+            metadataReady = false;
+            return;
+        }
+        metadataEntries = payload.entries && typeof payload.entries === 'object' ? payload.entries : {};
+        baseDisplayByPrefix = payload.base_display_by_prefix && typeof payload.base_display_by_prefix === 'object'
+            ? payload.base_display_by_prefix
+            : {};
+
+        const metadataNs = window.Ownfoil.Metadata = window.Ownfoil.Metadata || {};
+        metadataNs.entries = metadataEntries;
+        metadataNs.baseDisplayByPrefix = baseDisplayByPrefix;
+        metadataNs.getEntry = (appId) => {
+            const key = normalizeAppId(appId);
+            return key && Object.prototype.hasOwnProperty.call(metadataEntries, key)
+                ? metadataEntries[key]
+                : null;
+        };
+
+        metadataReady = true;
+        applyMetadataToGames(games);
+        sortGamesInPlace(games);
+        filteredGames = pruneGhostsInPlace(games.slice());
+    }
+
+    function applyMetadataToGames(targetGames) {
+        if (!metadataReady || !Array.isArray(targetGames)) return;
+
+        targetGames.forEach(game => {
+            if (!game || typeof game !== 'object') return;
+            const entry = window.Ownfoil.Metadata?.getEntry?.(game.app_id);
+
+            // Always clear metadata-derived fields before applying a new entry so stale values vanish.
+            game._metadataEntry = null;
+            game._sortTuple = undefined;
+            game._searchBlob = null;
+            game._searchTokens = null;
+            game._descriptionSearchTokens = null;
+            if ((game.app_type || '').toUpperCase() === 'DLC') {
+                // base_name may have been derived from metadata on previous load
+                game.base_name = game._orig?.title_id_name || game.base_name;
+            }
+            game.display_title = undefined;
+
+            if (!entry) return;
+            game._metadataEntry = entry;
+            if (Array.isArray(entry.sort)) {
+                game._sortTuple = entry.sort.slice();
+            }
+            if (typeof entry.search === 'string') {
+                game._searchBlob = entry.search;
+            }
+            if (Array.isArray(entry.search_tokens)) {
+                game._searchTokens = entry.search_tokens.slice();
+            }
+            if (Array.isArray(entry.description_search_tokens)) {
+                game._descriptionSearchTokens = entry.description_search_tokens.slice();
+            }
+            if (typeof entry.display_title === 'string') {
+                game.display_title = entry.display_title;
+                if ((game.app_type || '').toUpperCase() === 'DLC') {
+                    game.base_name = entry.display_title;
+                }
+            }
+        });
+    }
+
+    function hydrateGamesFromPayload(data) {
+        const list = Array.isArray(data?.games) ? data.games : [];
+        totalGames = Number.isFinite(data?.total) ? data.total : list.length;
+
+        games = list.map(g => {
+            const clone = { ...g };
+            clone._orig = {
+                name: clone.name,
+                title_id_name: clone.title_id_name,
+                release_date: clone.release_date ?? null,
+                app_type: clone.app_type,
+                suppressed_missing: clone.suppressed_missing === true
+            };
+
+            if ((clone.app_type || '').toUpperCase() === 'DLC') {
+                clone.base_name = clone.title_id_name;
+            }
+
+            const flags = Overrides?.computeRecognitionFlags(clone) || { isUnrecognized: true, hasTitleDb: false };
+            clone.isUnrecognized = flags.isUnrecognized;
+            clone.hasTitleDb = flags.hasTitleDb;
+            clone._searchBlob = null;
+            clone._searchTokens = null;
+            clone._descriptionSearchTokens = null;
+            return clone;
+        });
+
+        applyMetadataToGames(games);
+        sortGamesInPlace(games);
+
+        filteredGames = games.slice();
+        filteredGames = pruneGhostsInPlace(filteredGames);
+        baseFilteredGames = filteredGames.slice();
+    }
 
     function normalizePage(value, fallback = 1) {
         const num = Number(value);
@@ -253,42 +410,65 @@
     }
 
     function fetchGames() {
+        if (CacheHelpers && typeof CacheHelpers.conditionalFetch === 'function') {
+            return CacheHelpers.conditionalFetch({
+                url: '/api/titles',
+                storageKey: CacheKeys.library,
+                allowStaleFallback: true,
+            }).then(({ data }) => {
+                if (data && typeof data === 'object') {
+                    hydrateGamesFromPayload(data);
+                } else {
+                    totalGames = 0;
+                    games = [];
+                    filteredGames = [];
+                }
+            }).catch(() => {
+                totalGames = 0;
+                games = [];
+                filteredGames = [];
+            });
+        }
+
         return new Promise((resolve) => {
             $.get(`/api/titles`, function (data) {
-                const list = Array.isArray(data?.games) ? data.games : [];
-                totalGames = Number.isFinite(data?.total) ? data.total : list.length;
-
-                games = list.map(g => {
-                    const clone = { ...g };
-                    clone._orig = {
-                        name: clone.name,
-                        title_id_name: clone.title_id_name,
-                        release_date: clone.release_date ?? null,
-                        app_type: clone.app_type,
-                        suppressed_missing: clone.suppressed_missing === true
-                    };
-
-                    // remember base title for DLC at fetch-time
-                    if ((clone.app_type || '').toUpperCase() === 'DLC') {
-                        clone.base_name = clone.title_id_name;
-                    }
-
-                    // compute & attach client flags (invariant to overrides)
-                    const flags = Overrides?.computeRecognitionFlags(clone) || { isUnrecognized: true, hasTitleDb: false };
-                    clone.isUnrecognized = flags.isUnrecognized;
-                    clone.hasTitleDb = flags.hasTitleDb;
-                    clone._searchBlob = null;
-                    return clone;
-                });
-
-                filteredGames = games.slice();
-                filteredGames = pruneGhostsInPlace(filteredGames);
+                hydrateGamesFromPayload(data);
                 resolve();
             }).fail(function () {
-                totalGames    = 0;
-                games         = [];
+                totalGames = 0;
+                games = [];
                 filteredGames = [];
                 resolve();
+            });
+        });
+    }
+
+    function fetchMetadata() {
+        if (CacheHelpers && typeof CacheHelpers.conditionalFetch === 'function') {
+            return CacheHelpers.conditionalFetch({
+                url: '/api/metadata/library',
+                storageKey: CacheKeys.metadata,
+                allowStaleFallback: true,
+            }).then(({ data }) => {
+                if (data && typeof data === 'object') {
+                    applyMetadataPayload(data);
+                    return data;
+                }
+                applyMetadataPayload({});
+                return {};
+            }).catch(() => {
+                applyMetadataPayload({});
+                return {};
+            });
+        }
+
+        return new Promise((resolve) => {
+            $.get(`/api/metadata/library`, function (data) {
+                applyMetadataPayload(data || {});
+                resolve(data || {});
+            }).fail(function () {
+                applyMetadataPayload({});
+                resolve({});
             });
         });
     }
@@ -376,7 +556,8 @@
 
             const titleLine = document.createElement('div');
             titleLine.className = 'd-flex align-items-center justify-content-between';
-            const bigTitle = Overrides?.displayTitleFor?.(game, games) || game.name || '';
+            const metaTitle = (typeof game.display_title === 'string') ? game.display_title.trim() : '';
+            const bigTitle = metaTitle || Overrides?.displayTitleFor?.(game, games) || game.name || '';
             const titleH5 = document.createElement('h5');
             titleH5.className = 'card-title game-title mb-1';
             titleH5.textContent = bigTitle;
@@ -387,7 +568,7 @@
             descriptionP.className = 'card-text game-description mb-2';
             if ((game.app_type || '').toUpperCase() === 'DLC') {
                 let dlcName = (game.name || '').trim();
-                const baseName = (Overrides?.displayTitleFor?.(game, games) || '').trim();
+                const baseName = bigTitle.trim();
 
                 // Derive base name used in the header
                 if (baseName && dlcName.toLowerCase().startsWith(baseName.toLowerCase())) {
@@ -757,7 +938,6 @@
         addText(game.name);
         addText(game.title_id_name);
         addText(game.base_name);
-        addText(game.description);
 
         if (game._orig) {
             addText(game._orig.name);
@@ -767,12 +947,64 @@
         const override = Overrides?.getOverrideForGame?.(game);
         if (override) addText(override.name);
 
-        const displayTitle = Overrides?.displayTitleFor?.(game, games);
+        const displayTitle = (typeof game.display_title === 'string')
+            ? game.display_title
+            : Overrides?.displayTitleFor?.(game, games);
         if (displayTitle) addText(displayTitle);
 
         game._searchBlob = parts.join(' ');
+        game._searchTokens = parts.filter(Boolean);
         return game._searchBlob;
     };
+
+    function getDescriptionTokens(game) {
+        if (!game || typeof game !== 'object') return [];
+        if (Array.isArray(game._descriptionSearchTokens)) return game._descriptionSearchTokens;
+
+        const values = [];
+        if (typeof game.description === 'string') values.push(game.description);
+        const override = Overrides?.getOverrideForGame?.(game);
+        if (override && typeof override.description === 'string') values.push(override.description);
+
+        const tokenSet = new Set();
+        values.forEach((raw) => {
+            if (typeof raw !== 'string') return;
+            const normalized = raw.normalize ? raw.normalize('NFKD') : raw;
+            const withoutMarks = normalized.replace(/[\u0300-\u036f]/g, '');
+            const lowered = withoutMarks.toLowerCase().replace(/[^a-z0-9]+/g, ' ');
+            lowered.split(/\s+/).forEach((token) => {
+                if (token) tokenSet.add(token);
+            });
+        });
+
+        const tokens = Array.from(tokenSet);
+        game._descriptionSearchTokens = tokens;
+        return tokens;
+    }
+
+    function getBaseSearchTokens(game) {
+        if (!game || typeof game !== 'object') return [];
+        if (Array.isArray(game._searchTokens)) return game._searchTokens;
+        const entryTokens = game._metadataEntry?.search_tokens;
+        if (Array.isArray(entryTokens) && entryTokens.length > 0) {
+            game._searchTokens = entryTokens.slice();
+            return game._searchTokens;
+        }
+        buildSearchBlob(game);
+        if (Array.isArray(game._searchTokens)) return game._searchTokens;
+        const blob = typeof game._searchBlob === 'string' ? game._searchBlob : '';
+        game._searchTokens = blob.split(/\s+/).filter(Boolean);
+        return game._searchTokens;
+    }
+
+    function getSearchTokens(game) {
+        const baseTokens = getBaseSearchTokens(game);
+        if (!shouldIncludeDescriptionSearch()) return baseTokens;
+        const descTokens = getDescriptionTokens(game);
+        if (!descTokens.length) return baseTokens;
+        const prefixTokens = Array.isArray(baseTokens) ? baseTokens : [];
+        return prefixTokens.concat(descTokens);
+    }
 
     // Function to apply filters and show/hide game cards with animation
     function applyFilters(options = {}) {
@@ -883,9 +1115,13 @@
         const term = (searchTerm || '').trim().toLowerCase();
         if (!term) return src.slice();
 
+        const searchTokens = term.split(/\s+/).filter(Boolean);
+        if (searchTokens.length === 0) return src.slice();
+
         return src.filter(game => {
-            const blob = buildSearchBlob(game);
-            return blob.includes(term);
+            const tokens = getSearchTokens(game);
+            if (!tokens.length) return false;
+            return searchTokens.every(t => tokens.some(gt => gt.includes(t)));
         });
     }
 
@@ -925,23 +1161,58 @@
         updatePaginationSummary(Array.isArray(filteredGames) ? filteredGames.length : 0);
 
         // Fetch overrides for everyone, then fetch games and fold in redirect/projection data before applying explicit overrides
+        const metadataPromise = fetchMetadata();
         const overridesPromise = (overridesModule?.fetchOverrides)
             ? overridesModule.fetchOverrides()
             : Promise.resolve(null);
 
-        Promise.all([overridesPromise, fetchGames()])
-            .then(([ovFlags]) => {
-                // Only do work when needed
+        window.Ownfoil.onOverridesUpdated = () => {
+            if (suppressNextOverridesMetadataRefresh) {
+                suppressNextOverridesMetadataRefresh = false;
+                return;
+            }
+            fetchMetadata()
+                .then(() => {
+                    applyMetadataToGames(games);
+                    sortGamesInPlace(games);
+                    filteredGames = pruneGhostsInPlace(games.slice());
+                    baseFilteredGames = filteredGames.slice();
+                    applyFilters({ preservePage: true });
+                })
+                .catch(() => {
+                    applyMetadataToGames(games);
+                    sortGamesInPlace(games);
+                    filteredGames = pruneGhostsInPlace(games.slice());
+                    baseFilteredGames = filteredGames.slice();
+                    applyFilters({ preservePage: true });
+                });
+        };
+
+        suppressNextOverridesMetadataRefresh = true;
+
+        Promise.all([metadataPromise, overridesPromise, fetchGames()])
+            .then(([_, ovFlags]) => {
                 if (ovFlags?.redirectsChanged && overridesModule?.applyRedirectsToGames) {
                     overridesModule.applyRedirectsToGames(games);
                 }
                 if (ovFlags?.overridesChanged && overridesModule?.reapplyAllOverridesToGames) {
                     overridesModule.reapplyAllOverridesToGames(games);
                 }
+
+                applyMetadataToGames(games);
+                sortGamesInPlace(games);
+                filteredGames = pruneGhostsInPlace(games.slice());
+                baseFilteredGames = filteredGames.slice();
                 loadFiltersFromStorage();
+                suppressNextOverridesMetadataRefresh = false;
             })
             .catch(() => {
+                applyMetadataToGames(games);
+                sortGamesInPlace(games);
+                filteredGames = pruneGhostsInPlace(games.slice());
+                baseFilteredGames = filteredGames.slice();
                 loadFiltersFromStorage();
+                suppressNextOverridesMetadataRefresh = false;
             });
 
         function recalcPageForNewPageSize(prevItemsPerPage) {

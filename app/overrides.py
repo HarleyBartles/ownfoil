@@ -312,6 +312,8 @@ def _generate_overrides_snapshot():
         current_hash = compute_overrides_snapshot_hash()
         snapshot = {
             "hash": current_hash,
+            "snapshot_version": OVERRIDES_SNAPSHOT_VERSION,
+            "generated_at": datetime.datetime.utcnow().isoformat(timespec="seconds"),
             "payload": {
                 "items": items,
                 "redirects": redirects,
@@ -380,6 +382,7 @@ def _refresh_caches():
         app = current_app._get_current_object()
     except RuntimeError:
         regenerate_cache(OVERRIDES_CACHE_FILE)
+        regenerate_cache(LIBRARY_METADATA_CACHE_FILE)
         saved_shop = load_json(SHOP_CACHE_FILE, default=None)
         if not is_shop_snapshot_current(saved_shop):
             regenerate_cache(SHOP_CACHE_FILE)
@@ -389,6 +392,7 @@ def _refresh_caches():
         with app.app_context():
             try:
                 regenerate_cache(OVERRIDES_CACHE_FILE)
+                regenerate_cache(LIBRARY_METADATA_CACHE_FILE)
                 saved_shop = load_json(SHOP_CACHE_FILE, default=None)
                 if not is_shop_snapshot_current(saved_shop):
                     regenerate_cache(SHOP_CACHE_FILE)

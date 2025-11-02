@@ -23,6 +23,7 @@ import titles
 from utils import *
 from library import *
 from overrides import *
+from metadata import metadata_blueprint
 from cache import regenerate_all_caches
 import titledb
 import os
@@ -234,6 +235,7 @@ def create_app():
 
     app.register_blueprint(auth_blueprint)
     app.register_blueprint(overrides_blueprint)
+    app.register_blueprint(metadata_blueprint)
 
     return app
 

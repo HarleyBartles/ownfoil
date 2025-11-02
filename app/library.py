@@ -8,10 +8,12 @@ from typing import Dict, Optional
 
 from sqlalchemy import or_
 
-from cache import compute_library_apps_hash, is_library_snapshot_current
+from cache import (
+    compute_library_apps_hash,
+    is_library_snapshot_current,
+)
 from constants import *
 from db import *
-from overrides import build_override_index
 from settings import load_settings
 import titles as titles_lib
 from utils import *
@@ -882,17 +884,6 @@ def remove_outdated_update_files(watcher):
                 return normalized.upper()
             return trimmed.upper()
 
-        override_index = build_override_index(include_disabled=False) or {}
-        raw_overrides = override_index.get("by_app") if isinstance(override_index, dict) else {}
-        overrides_by_app: dict[str, dict] = {}
-        if isinstance(raw_overrides, dict):
-            for raw_app_id, payload in raw_overrides.items():
-                if not isinstance(payload, dict):
-                    continue
-                normalized_app_id = _normalized_id(raw_app_id, "app")
-                if normalized_app_id:
-                    overrides_by_app[normalized_app_id] = payload
-
         for title in titles:
             title_apps = get_all_title_apps(title.title_id)
 
@@ -1077,17 +1068,6 @@ def _generate_library_snapshot():
                 return normalized.upper()
             return trimmed.upper()
 
-        override_index = build_override_index(include_disabled=False) or {}
-        raw_overrides = override_index.get("by_app") if isinstance(override_index, dict) else {}
-        overrides_by_app: dict[str, dict] = {}
-        if isinstance(raw_overrides, dict):
-            for raw_app_id, payload in raw_overrides.items():
-                if not isinstance(payload, dict):
-                    continue
-                normalized_app_id = _normalized_id(raw_app_id, "app")
-                if normalized_app_id:
-                    overrides_by_app[normalized_app_id] = payload
-
         for title in titles:
             has_none_value = any(value is None for value in title.values())
             if has_none_value:
@@ -1250,20 +1230,13 @@ def _generate_library_snapshot():
                         return trimmed
             return None
 
-        def _override_for_app(app_id):
-            key = _normalized_id(app_id, "app")
-            return overrides_by_app.get(key)
-
         base_sort_name_by_id: dict[str, str] = {}
         for game in games_info:
             app_type = (game.get('app_type') or '').upper()
             if app_type != APP_TYPE_BASE:
                 continue
 
-            override = _override_for_app(game.get('app_id'))
-            override_name = _first_nonempty(override.get('name')) if override else None
             display_name = _first_nonempty(
-                override_name,
                 game.get('title_id_name'),
                 game.get('name')
             ) or 'Unrecognized'
@@ -1276,24 +1249,13 @@ def _generate_library_snapshot():
                 if candidate:
                     base_sort_name_by_id[candidate] = display_name
 
-            if override:
-                corrected = _normalized_id(override.get('corrected_title_id'), "title")
-                if corrected:
-                    base_sort_name_by_id[corrected] = display_name
-
         def _compute_sort_tuple(game: dict) -> tuple[str, str, int, str, str]:
             app_type = (game.get('app_type') or '').upper()
             app_id_norm = _normalized_id(game.get('app_id'), "app")
             title_id_norm = _normalized_id(game.get('title_id'), "title")
-            override = overrides_by_app.get(app_id_norm)
-            override_name = _first_nonempty(override.get('name')) if override else None
 
             if app_type == APP_TYPE_DLC:
                 base_sort_name = base_sort_name_by_id.get(title_id_norm)
-                if not base_sort_name and override:
-                    corrected = _normalized_id(override.get('corrected_title_id'), "title")
-                    if corrected:
-                        base_sort_name = base_sort_name_by_id.get(corrected)
                 if not base_sort_name:
                     corrected = _normalized_id(game.get('corrected_title_id'), "title")
                     if corrected:
@@ -1302,7 +1264,6 @@ def _generate_library_snapshot():
                 sort_name = _first_nonempty(
                     base_sort_name,
                     game.get('title_id_name'),
-                    override_name,
                     game.get('name')
                 ) or 'Unrecognized'
                 base_key = title_id_norm or app_id_norm
@@ -1310,7 +1271,6 @@ def _generate_library_snapshot():
             elif app_type == APP_TYPE_BASE:
                 sort_name = base_sort_name_by_id.get(title_id_norm) or (
                     _first_nonempty(
-                        override_name,
                         game.get('title_id_name'),
                         game.get('name')
                     ) or 'Unrecognized'
@@ -1319,7 +1279,6 @@ def _generate_library_snapshot():
                 sort_kind = 0
             else:
                 sort_name = _first_nonempty(
-                    override_name,
                     game.get('title_id_name'),
                     game.get('name')
                 ) or 'Unrecognized'
@@ -1347,6 +1306,7 @@ def _generate_library_snapshot():
             'hash': compute_library_apps_hash(),
             'titledb_commit': titles_lib.get_titledb_commit_hash() or "",
             'snapshot_version': LIBRARY_SNAPSHOT_VERSION,
+            'generated_at': datetime.datetime.utcnow().isoformat(timespec="seconds"),
             'library': sorted_games
         }
 
@@ -1354,6 +1314,7 @@ def _generate_library_snapshot():
         save_json(library_data, LIBRARY_CACHE_FILE, default=_json_default)
         logger.info('Generating library snapshot done.')
         return library_data
+    
 
 def _best_file_basename(files):
     if not files:
