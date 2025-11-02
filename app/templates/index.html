@@ -215,6 +215,25 @@
     const CURRENT_PAGE_KEY = 'currentPage';
     const CacheHelpers = window.Ownfoil?.Cache || null;
     const CacheKeys = window.Ownfoil?.CacheKeys || {};
+    const CombinedCacheVersion = 1;
+    const CombinedCache = (
+        CacheHelpers &&
+        typeof CacheHelpers.createLibraryCombinedManager === 'function'
+    )
+        ? CacheHelpers.createLibraryCombinedManager({ version: CombinedCacheVersion })
+        : null;
+    const lastKnownEtags = {
+        titles: null,
+        metadata: null,
+        overrides: null,
+    };
+
+    function updateKnownEtags(partial) {
+        if (!partial || typeof partial !== 'object') return;
+        if (partial.titles !== undefined) lastKnownEtags.titles = partial.titles;
+        if (partial.metadata !== undefined) lastKnownEtags.metadata = partial.metadata;
+        if (partial.overrides !== undefined) lastKnownEtags.overrides = partial.overrides;
+    }
     const SearchConfig = window.Ownfoil.SearchConfig = window.Ownfoil.SearchConfig || {};
     if (typeof SearchConfig.includeDescriptions !== 'boolean') {
         SearchConfig.includeDescriptions = false;
@@ -265,17 +284,9 @@
         });
     }
 
-    function applyMetadataPayload(payload) {
-        if (!payload || typeof payload !== 'object') {
-            metadataEntries = {};
-            baseDisplayByPrefix = {};
-            metadataReady = false;
-            return;
-        }
-        metadataEntries = payload.entries && typeof payload.entries === 'object' ? payload.entries : {};
-        baseDisplayByPrefix = payload.base_display_by_prefix && typeof payload.base_display_by_prefix === 'object'
-            ? payload.base_display_by_prefix
-            : {};
+    function setMetadataState(entries, baseLookup) {
+        metadataEntries = entries && typeof entries === 'object' ? entries : {};
+        baseDisplayByPrefix = baseLookup && typeof baseLookup === 'object' ? baseLookup : {};
 
         const metadataNs = window.Ownfoil.Metadata = window.Ownfoil.Metadata || {};
         metadataNs.entries = metadataEntries;
@@ -286,11 +297,38 @@
                 ? metadataEntries[key]
                 : null;
         };
+    }
+
+    function applyMetadataPayload(payload) {
+        if (!payload || typeof payload !== 'object') {
+            setMetadataState({}, {});
+            metadataReady = false;
+            return;
+        }
+        const entries = payload.entries && typeof payload.entries === 'object' ? payload.entries : {};
+        const baseLookup = payload.base_display_by_prefix && typeof payload.base_display_by_prefix === 'object'
+            ? payload.base_display_by_prefix
+            : {};
+
+        setMetadataState(entries, baseLookup);
 
         metadataReady = true;
         applyMetadataToGames(games);
         sortGamesInPlace(games);
         filteredGames = pruneGhostsInPlace(games.slice());
+    }
+
+    function restoreCombinedSnapshot(snapshot) {
+        if (!snapshot || !Array.isArray(snapshot.games)) return false;
+        games = snapshot.games.slice();
+        totalGames = Number.isFinite(snapshot.totalGames) ? snapshot.totalGames : games.length;
+
+        setMetadataState(snapshot.metadataEntries, snapshot.baseDisplayByPrefix);
+        metadataReady = true;
+
+        filteredGames = pruneGhostsInPlace(games.slice());
+        baseFilteredGames = filteredGames.slice();
+        return true;
     }
 
     function applyMetadataToGames(targetGames) {
@@ -413,32 +451,38 @@
         if (CacheHelpers && typeof CacheHelpers.conditionalFetch === 'function') {
             return CacheHelpers.conditionalFetch({
                 url: '/api/titles',
-                storageKey: CacheKeys.library,
+                storageKey: CacheKeys.titles,
                 allowStaleFallback: true,
-            }).then(({ data }) => {
-                if (data && typeof data === 'object') {
-                    hydrateGamesFromPayload(data);
-                } else {
-                    totalGames = 0;
-                    games = [];
-                    filteredGames = [];
-                }
-            }).catch(() => {
-                totalGames = 0;
-                games = [];
-                filteredGames = [];
-            });
+            }).then((result) => {
+                const payload = (result && typeof result.data === 'object') ? result.data : null;
+                return {
+                    data: payload,
+                    etag: result?.etag || null,
+                    fromCache: !!result?.fromCache,
+                };
+            }).catch(() => ({
+                data: null,
+                etag: null,
+                fromCache: false,
+                error: true,
+            }));
         }
 
         return new Promise((resolve) => {
-            $.get(`/api/titles`, function (data) {
-                hydrateGamesFromPayload(data);
-                resolve();
-            }).fail(function () {
-                totalGames = 0;
-                games = [];
-                filteredGames = [];
-                resolve();
+            $.ajax({
+                url: '/api/titles',
+                method: 'GET',
+                dataType: 'json',
+                success(data, _textStatus, xhr) {
+                    resolve({
+                        data: data && typeof data === 'object' ? data : null,
+                        etag: xhr?.getResponseHeader('ETag') || xhr?.getResponseHeader('etag') || null,
+                        fromCache: false,
+                    });
+                },
+                error() {
+                    resolve({ data: null, etag: null, fromCache: false, error: true });
+                },
             });
         });
     }
@@ -449,26 +493,36 @@
                 url: '/api/metadata',
                 storageKey: CacheKeys.metadata,
                 allowStaleFallback: true,
-            }).then(({ data }) => {
-                if (data && typeof data === 'object') {
-                    applyMetadataPayload(data);
-                    return data;
-                }
-                applyMetadataPayload({});
-                return {};
-            }).catch(() => {
-                applyMetadataPayload({});
-                return {};
-            });
+            }).then((result) => {
+                const payload = (result && typeof result.data === 'object') ? result.data : null;
+                return {
+                    data: payload,
+                    etag: result?.etag || null,
+                    fromCache: !!result?.fromCache,
+                };
+            }).catch(() => ({
+                data: null,
+                etag: null,
+                fromCache: false,
+                error: true,
+            }));
         }
 
         return new Promise((resolve) => {
-            $.get(`/api/metadata`, function (data) {
-                applyMetadataPayload(data || {});
-                resolve(data || {});
-            }).fail(function () {
-                applyMetadataPayload({});
-                resolve({});
+            $.ajax({
+                url: '/api/metadata',
+                method: 'GET',
+                dataType: 'json',
+                success(data, _textStatus, xhr) {
+                    resolve({
+                        data: data && typeof data === 'object' ? data : null,
+                        etag: xhr?.getResponseHeader('ETag') || xhr?.getResponseHeader('etag') || null,
+                        fromCache: false,
+                    });
+                },
+                error() {
+                    resolve({ data: null, etag: null, fromCache: false, error: true });
+                },
             });
         });
     }
@@ -1161,10 +1215,16 @@
         updatePaginationSummary(Array.isArray(filteredGames) ? filteredGames.length : 0);
 
         // Fetch overrides for everyone, then fetch games and fold in redirect/projection data before applying explicit overrides
+        const combinedSnapshot = CombinedCache?.load ? CombinedCache.load() : null;
+        if (combinedSnapshot?.etags) {
+            updateKnownEtags(combinedSnapshot.etags);
+        }
+
         const metadataPromise = fetchMetadata();
         const overridesPromise = (overridesModule?.fetchOverrides)
             ? overridesModule.fetchOverrides()
             : Promise.resolve(null);
+        const titlesPromise = fetchGames();
 
         window.Ownfoil.onOverridesUpdated = () => {
             if (suppressNextOverridesMetadataRefresh) {
@@ -1172,11 +1232,29 @@
                 return;
             }
             fetchMetadata()
-                .then(() => {
+                .then((metaResult) => {
+                    const payload = metaResult && typeof metaResult.data === 'object' ? metaResult.data : {};
+                    applyMetadataPayload(payload);
+                    updateKnownEtags({ metadata: metaResult?.etag ?? lastKnownEtags.metadata });
+
                     applyMetadataToGames(games);
                     sortGamesInPlace(games);
                     filteredGames = pruneGhostsInPlace(games.slice());
                     baseFilteredGames = filteredGames.slice();
+                    if (metaResult?.error) {
+                        CombinedCache?.clear?.();
+                    } else {
+                        CombinedCache?.persist?.({
+                            games,
+                            totalGames,
+                            metadataEntries,
+                            baseDisplayByPrefix,
+                        }, {
+                            titles: lastKnownEtags.titles,
+                            metadata: lastKnownEtags.metadata,
+                            overrides: lastKnownEtags.overrides,
+                        });
+                    }
                     applyFilters({ preservePage: true });
                 })
                 .catch(() => {
@@ -1190,12 +1268,73 @@
 
         suppressNextOverridesMetadataRefresh = true;
 
-        Promise.all([metadataPromise, overridesPromise, fetchGames()])
-            .then(([_, ovFlags]) => {
-                if (ovFlags?.redirectsChanged && overridesModule?.applyRedirectsToGames) {
+        Promise.all([metadataPromise, overridesPromise, titlesPromise])
+            .then(([metadataResult, overridesResult, titlesResult]) => {
+                const overridesFlags = overridesResult || {};
+                const titlesEtag = titlesResult?.etag || null;
+                const metadataEtag = metadataResult?.etag || null;
+                const overridesEtag = overridesFlags?.etag || null;
+                const overridesFromCache = overridesFlags?.fromCache !== false;
+                const allFromCache =
+                    metadataResult?.fromCache === true &&
+                    titlesResult?.fromCache === true &&
+                    overridesFromCache;
+
+                const etagsForComparison = {
+                    titles: titlesEtag,
+                    metadata: metadataEtag,
+                    overrides: overridesEtag,
+                };
+
+                const snapshotMatches =
+                    combinedSnapshot &&
+                    Array.isArray(combinedSnapshot.games) &&
+                    combinedSnapshot.etags &&
+                    combinedSnapshot.etags.titles === etagsForComparison.titles &&
+                    combinedSnapshot.etags.metadata === etagsForComparison.metadata &&
+                    combinedSnapshot.etags.overrides === etagsForComparison.overrides;
+
+                if (combinedSnapshot && snapshotMatches && allFromCache) {
+                    if (restoreCombinedSnapshot(combinedSnapshot)) {
+                        if (overridesModule?.applyRedirectsToGames) {
+                            overridesModule.applyRedirectsToGames(games);
+                        }
+                        if (overridesModule?.reapplyAllOverridesToGames) {
+                            overridesModule.reapplyAllOverridesToGames(games);
+                        }
+                        updateKnownEtags({
+                            titles: etagsForComparison.titles ?? combinedSnapshot.etags.titles,
+                            metadata: etagsForComparison.metadata ?? combinedSnapshot.etags.metadata,
+                            overrides: etagsForComparison.overrides ?? combinedSnapshot.etags.overrides,
+                        });
+                        CombinedCache?.touch?.(combinedSnapshot, etagsForComparison);
+                        loadFiltersFromStorage();
+                        suppressNextOverridesMetadataRefresh = false;
+                        return;
+                    }
+                }
+
+                const titlesPayload = titlesResult && typeof titlesResult.data === 'object'
+                    ? titlesResult.data
+                    : null;
+                if (titlesPayload) {
+                    hydrateGamesFromPayload(titlesPayload);
+                } else {
+                    totalGames = 0;
+                    games = [];
+                    filteredGames = [];
+                    baseFilteredGames = [];
+                }
+
+                const metadataPayload = metadataResult && typeof metadataResult.data === 'object'
+                    ? metadataResult.data
+                    : {};
+                applyMetadataPayload(metadataPayload);
+
+                if (overridesFlags?.redirectsChanged && overridesModule?.applyRedirectsToGames) {
                     overridesModule.applyRedirectsToGames(games);
                 }
-                if (ovFlags?.overridesChanged && overridesModule?.reapplyAllOverridesToGames) {
+                if (overridesFlags?.overridesChanged && overridesModule?.reapplyAllOverridesToGames) {
                     overridesModule.reapplyAllOverridesToGames(games);
                 }
 
@@ -1203,6 +1342,26 @@
                 sortGamesInPlace(games);
                 filteredGames = pruneGhostsInPlace(games.slice());
                 baseFilteredGames = filteredGames.slice();
+                updateKnownEtags({
+                    titles: titlesEtag,
+                    metadata: metadataEtag,
+                    overrides: overridesEtag,
+                });
+                const hadErrors = metadataResult?.error || titlesResult?.error || overridesFlags?.error;
+                if (hadErrors) {
+                    CombinedCache?.clear?.();
+                } else {
+                    CombinedCache?.persist?.({
+                        games,
+                        totalGames,
+                        metadataEntries,
+                        baseDisplayByPrefix,
+                    }, {
+                        titles: lastKnownEtags.titles,
+                        metadata: lastKnownEtags.metadata,
+                        overrides: lastKnownEtags.overrides,
+                    });
+                }
                 loadFiltersFromStorage();
                 suppressNextOverridesMetadataRefresh = false;
             })
@@ -1213,6 +1372,7 @@
                 baseFilteredGames = filteredGames.slice();
                 loadFiltersFromStorage();
                 suppressNextOverridesMetadataRefresh = false;
+                CombinedCache?.clear?.();
             });
 
         function recalcPageForNewPageSize(prevItemsPerPage) {

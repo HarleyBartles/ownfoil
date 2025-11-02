@@ -17,9 +17,10 @@
   cacheNs.TTL_MS = Number.isFinite(cacheNs.TTL_MS) ? cacheNs.TTL_MS : DEFAULT_TTL_MS;
 
   const cacheKeys = namespace.CacheKeys = namespace.CacheKeys || {};
-  cacheKeys.library = cacheKeys.library || 'ownfoil.cache.library.v1';
+  cacheKeys.titles = cacheKeys.titles || 'ownfoil.cache.titles.v1';
   cacheKeys.metadata = cacheKeys.metadata || 'ownfoil.cache.library-metadata.v1';
   cacheKeys.overrides = cacheKeys.overrides || 'ownfoil.cache.overrides.v1';
+  cacheKeys.library = cacheKeys.library || 'ownfoil.cache.library-combined.v1';
 
   const now = () => Date.now();
 
@@ -68,6 +69,94 @@
   cacheNs.touchSnapshot = function touchSnapshot(key, snapshot, etagOverride) {
     if (!snapshot || snapshot.data == null) return;
     cacheNs.persistSnapshot(key, etagOverride || snapshot.etag || null, snapshot.data);
+  };
+
+  cacheNs.createLibraryCombinedManager = function createLibraryCombinedManager(options = {}) {
+    const storageKey = cacheKeys.library;
+    if (!storageKey) {
+      return {
+        load: () => null,
+        persist: () => {},
+        touch: () => {},
+        clear: () => {},
+      };
+    }
+
+    const version = Number.isFinite(options.version) ? Number(options.version) : 1;
+    const combineEtags = (etags = {}) => [
+      etags.titles || '',
+      etags.metadata || '',
+      etags.overrides || '',
+    ].join('|');
+
+    const normalizeEtags = (etags = {}) => ({
+      titles: etags.titles || null,
+      metadata: etags.metadata || null,
+      overrides: etags.overrides || null,
+    });
+
+    const load = () => {
+      if (typeof cacheNs.loadSnapshot !== 'function') return null;
+      try {
+        const snapshot = cacheNs.loadSnapshot(storageKey, options);
+        if (!snapshot || snapshot.isFresh === false) return null;
+        const data = snapshot.data;
+        if (!data || typeof data !== 'object') return null;
+        if (data.version !== version) return null;
+        if (!Array.isArray(data.games)) return null;
+        return {
+          version,
+          games: data.games,
+          totalGames: Number.isFinite(data.totalGames) ? data.totalGames : data.games.length,
+          metadataEntries: typeof data.metadataEntries === 'object' && data.metadataEntries
+            ? data.metadataEntries
+            : {},
+          baseDisplayByPrefix: typeof data.baseDisplayByPrefix === 'object' && data.baseDisplayByPrefix
+            ? data.baseDisplayByPrefix
+            : {},
+          etags: normalizeEtags(data.etags || {}),
+          raw: snapshot,
+        };
+      } catch {
+        return null;
+      }
+    };
+
+    const persist = (payload, etags) => {
+      if (typeof cacheNs.persistSnapshot !== 'function') return;
+      if (!payload || !Array.isArray(payload.games)) return;
+      const normalizedEtags = normalizeEtags(etags || {});
+      const data = {
+        version,
+        games: payload.games,
+        totalGames: Number.isFinite(payload.totalGames) ? payload.totalGames : payload.games.length,
+        metadataEntries: typeof payload.metadataEntries === 'object' && payload.metadataEntries
+          ? payload.metadataEntries
+          : {},
+        baseDisplayByPrefix: typeof payload.baseDisplayByPrefix === 'object' && payload.baseDisplayByPrefix
+          ? payload.baseDisplayByPrefix
+          : {},
+        etags: normalizedEtags,
+      };
+      cacheNs.persistSnapshot(storageKey, combineEtags(normalizedEtags), data);
+    };
+
+    const touch = (loadedSnapshot, overrideEtags) => {
+      if (typeof cacheNs.touchSnapshot !== 'function') return;
+      if (!loadedSnapshot || !loadedSnapshot.raw) return;
+      const etagsToUse = normalizeEtags(overrideEtags || loadedSnapshot.etags || {});
+      cacheNs.touchSnapshot(storageKey, loadedSnapshot.raw, combineEtags(etagsToUse));
+    };
+
+    const clear = () => {
+      try {
+        localStorage.removeItem(storageKey);
+      } catch {
+        // Ignore storage errors (e.g., private browsing, quota issues)
+      }
+    };
+
+    return { load, persist, touch, clear };
   };
 
   cacheNs.conditionalFetch = function conditionalFetch(options = {}) {

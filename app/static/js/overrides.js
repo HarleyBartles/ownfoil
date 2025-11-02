@@ -358,6 +358,9 @@
     const fetchOverrides = async () => {
       try {
         let list = null;
+        let etag = null;
+        let fromCache = false;
+        let rawData = null;
         if (cacheHelpers?.conditionalFetch) {
           const result = await cacheHelpers.conditionalFetch({
             url: '/api/overrides',
@@ -365,17 +368,28 @@
             allowStaleFallback: true,
           });
           list = result?.data || null;
+          rawData = list;
+          etag = result?.etag || null;
+          fromCache = !!result?.fromCache;
         } else {
-          list = await $.ajax({
+          const jqXHR = $.ajax({
             url: '/api/overrides',
             method: 'GET',
             dataType: 'json',
             ifModified: true,
           });
+          list = await jqXHR;
+          rawData = list;
+          if (typeof jqXHR?.getResponseHeader === 'function') {
+            etag = jqXHR.getResponseHeader('ETag') || jqXHR.getResponseHeader('etag') || null;
+          }
+          if (typeof jqXHR?.status === 'number') {
+            fromCache = jqXHR.status === 304;
+          }
         }
 
         if (!list || typeof list !== 'object') {
-          return { overridesChanged: false, redirectsChanged: false };
+          return { overridesChanged: false, redirectsChanged: false, etag, fromCache, data: rawData };
         }
 
         overridesByKey.clear();
@@ -404,11 +418,14 @@
         return {
           overridesChanged: true,
           redirectsChanged: true,
+          etag,
+          fromCache,
+          data: rawData,
         };
       } catch (e) {
         overridesByKey.clear();
         redirectsByAppId.clear();
-        return { overridesChanged: false, redirectsChanged: false };
+        return { overridesChanged: false, redirectsChanged: false, etag: null, fromCache: false, data: null, error: e };
       }
     };
 
