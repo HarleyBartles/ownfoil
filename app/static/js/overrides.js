@@ -355,22 +355,26 @@
   };
 
   // ----------------- Fetching -----------------
-    const fetchOverrides = async () => {
+  const fetchOverrides = async () => {
       try {
         let list = null;
         let etag = null;
         let fromCache = false;
         let rawData = null;
+        let notModified = false;
+        let staleFallback = false;
         if (cacheHelpers?.conditionalFetch) {
           const result = await cacheHelpers.conditionalFetch({
             url: '/api/overrides',
-            storageKey: cacheKeys.overrides || 'ownfoil.cache.overrides.v1',
+            storageKey: cacheKeys.overrides || 'ownfoil.cache.overrides.v2',
             allowStaleFallback: true,
           });
-          list = result?.data || null;
+          list = result?.data ?? null;
           rawData = list;
           etag = result?.etag || null;
           fromCache = !!result?.fromCache;
+          notModified = result?.notModified === true;
+          staleFallback = result?.staleFallback === true;
         } else {
           const jqXHR = $.ajax({
             url: '/api/overrides',
@@ -386,10 +390,37 @@
           if (typeof jqXHR?.status === 'number') {
             fromCache = jqXHR.status === 304;
           }
+          notModified = fromCache && !list;
+        }
+
+        const hasExistingState = overridesByKey.size > 0 || redirectsByAppId.size > 0;
+        if (notModified && hasExistingState) {
+          notifyOverridesObservers();
+          return {
+            overridesChanged: false,
+            redirectsChanged: false,
+            etag,
+            fromCache: true,
+            data: null,
+            notModified: true,
+            staleFallback,
+          };
         }
 
         if (!list || typeof list !== 'object') {
-          return { overridesChanged: false, redirectsChanged: false, etag, fromCache, data: rawData };
+          if (!notModified) {
+            overridesByKey.clear();
+            redirectsByAppId.clear();
+          }
+          return {
+            overridesChanged: false,
+            redirectsChanged: false,
+            etag,
+            fromCache,
+            data: rawData,
+            notModified,
+            staleFallback,
+          };
         }
 
         overridesByKey.clear();
@@ -421,11 +452,22 @@
           etag,
           fromCache,
           data: rawData,
+          notModified: false,
+          staleFallback,
         };
       } catch (e) {
         overridesByKey.clear();
         redirectsByAppId.clear();
-        return { overridesChanged: false, redirectsChanged: false, etag: null, fromCache: false, data: null, error: e };
+        return {
+          overridesChanged: false,
+          redirectsChanged: false,
+          etag: null,
+          fromCache: false,
+          data: null,
+          error: e,
+          notModified: false,
+          staleFallback: false,
+        };
       }
     };
 
@@ -1225,6 +1267,47 @@
 
     // fetching/overlay
     fetchOverrides,
+    hydrateFromSnapshot(snapshot = {}) {
+      try {
+        overridesByKey.clear();
+        redirectsByAppId.clear();
+        ARTWORK_BUSTERS.clear();
+
+        const items = Array.isArray(snapshot.items) ? snapshot.items : [];
+        items.forEach((o) => {
+          const k = appKey(o);
+          if (k) overridesByKey.set(k, { ...o });
+        });
+
+        const redirects = (snapshot.redirects && typeof snapshot.redirects === 'object') ? snapshot.redirects : {};
+        Object.entries(redirects).forEach(([appId, val]) => {
+          if (!appId) return;
+          if (val && typeof val === 'object') {
+            redirectsByAppId.set(appId, {
+              corrected_title_id: val.corrected_title_id || null,
+              projection: (val.projection && typeof val.projection === 'object') ? val.projection : null,
+            });
+          }
+        });
+
+        const busters = Array.isArray(snapshot.busters) ? snapshot.busters : [];
+        busters.forEach((tuple) => {
+          if (!Array.isArray(tuple) || tuple.length !== 2) return;
+          const [appId, value] = tuple;
+          if (!appId) return;
+          const num = Number(value);
+          ARTWORK_BUSTERS.set(appId, Number.isFinite(num) ? num : 0);
+        });
+
+        notifyOverridesObservers();
+        return overridesByKey.size > 0 || redirectsByAppId.size > 0;
+      } catch {
+        overridesByKey.clear();
+        redirectsByAppId.clear();
+        ARTWORK_BUSTERS.clear();
+        return false;
+      }
+    },
     reapplyAllOverridesToGames,
     hasActiveOverride,
     bannerUrlFor,
@@ -1242,6 +1325,26 @@
     getRedirectForApp,
     applyRedirectToGame,
     applyRedirectsToGames,
+
+    getSnapshotForCache() {
+      const overridesList = Array.from(overridesByKey.entries()).map(([appId, override]) => ({
+        ...override,
+        app_id: override?.app_id || appId,
+      }));
+      const redirectsObj = {};
+      redirectsByAppId.forEach((val, appId) => {
+        redirectsObj[appId] = {
+          corrected_title_id: val?.corrected_title_id || null,
+          projection: val?.projection || null,
+        };
+      });
+      const busters = Array.from(ARTWORK_BUSTERS.entries()).map(([appId, val]) => [appId, Number(val) || 0]);
+      return {
+        items: overridesList,
+        redirects: redirectsObj,
+        busters,
+      };
+    },
   };
   namespace.Overrides = overridesApi;
 })(window, window.jQuery);

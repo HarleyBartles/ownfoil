@@ -1,7 +1,7 @@
 /* eslint-disable no-console */
 'use strict';
 
-// Shared caching helpers for localStorage-backed JSON snapshots.
+// Shared caching helpers for async snapshot management with IndexedDB fallback to localStorage.
 // Relies on jQuery's $.ajax for conditional requests.
 
 ((global, $) => {
@@ -17,12 +17,21 @@
   cacheNs.TTL_MS = Number.isFinite(cacheNs.TTL_MS) ? cacheNs.TTL_MS : DEFAULT_TTL_MS;
 
   const cacheKeys = namespace.CacheKeys = namespace.CacheKeys || {};
-  cacheKeys.titles = cacheKeys.titles || 'ownfoil.cache.titles.v1';
-  cacheKeys.metadata = cacheKeys.metadata || 'ownfoil.cache.library-metadata.v1';
-  cacheKeys.overrides = cacheKeys.overrides || 'ownfoil.cache.overrides.v1';
-  cacheKeys.library = cacheKeys.library || 'ownfoil.cache.library-combined.v1';
+  cacheKeys.titles = cacheKeys.titles || 'ownfoil.cache.titles.v2';
+  cacheKeys.metadata = cacheKeys.metadata || 'ownfoil.cache.library-metadata.v2';
+  cacheKeys.overrides = cacheKeys.overrides || 'ownfoil.cache.overrides.v2';
+  cacheKeys.library = cacheKeys.library || 'ownfoil.cache.library-combined.v2';
 
   const now = () => Date.now();
+  const supportsIndexedDb = typeof global.indexedDB !== 'undefined';
+
+  const IDB_CONFIG = {
+    name: 'ownfoil-cache',
+    version: 1,
+    store: 'snapshots',
+  };
+
+  let openDbPromise = null;
 
   function _coerceTtl(options) {
     if (!options) return cacheNs.TTL_MS;
@@ -30,55 +39,194 @@
     return Number.isFinite(explicit) && explicit > 0 ? explicit : cacheNs.TTL_MS;
   }
 
-  cacheNs.loadSnapshot = function loadSnapshot(key, options) {
-    const ttlMs = _coerceTtl(options);
+  function _normalizeSnapshotObject(raw, ttlMs) {
+    if (!raw || typeof raw !== 'object') return null;
+    const savedAt = Number(raw.savedAt);
+    if (!Number.isFinite(savedAt)) return null;
+    const age = now() - savedAt;
+    const etag = (typeof raw.etag === 'string' && raw.etag.trim()) ? raw.etag.trim() : null;
+    return {
+      data: raw.data ?? null,
+      etag,
+      savedAt,
+      isFresh: age <= ttlMs,
+      raw,
+    };
+  }
+
+  function _deserializeLocalStorage(raw, ttlMs) {
+    if (!raw) return null;
     try {
-      const raw = localStorage.getItem(key);
-      if (!raw) return null;
       const parsed = JSON.parse(raw);
-      if (!parsed || typeof parsed !== 'object') return null;
-      const savedAt = Number(parsed.savedAt);
-      if (!Number.isFinite(savedAt)) return null;
-      const etag = (typeof parsed.etag === 'string' && parsed.etag.trim()) ? parsed.etag.trim() : null;
-      const age = now() - savedAt;
-      return {
-        data: parsed.data ?? null,
-        etag,
-        savedAt,
-        isFresh: age <= ttlMs,
-      };
+      return _normalizeSnapshotObject(parsed, ttlMs);
     } catch {
       return null;
     }
-  };
+  }
 
-  cacheNs.persistSnapshot = function persistSnapshot(key, etag, data) {
-    if (data == null) return;
+  async function openDatabase() {
+    if (!supportsIndexedDb) return null;
+    if (openDbPromise) return openDbPromise;
+
+    openDbPromise = new Promise((resolve, reject) => {
+      try {
+        const request = global.indexedDB.open(IDB_CONFIG.name, IDB_CONFIG.version);
+        request.onerror = () => reject(request.error || new Error('indexedDB open failed'));
+        request.onsuccess = () => resolve(request.result);
+        request.onupgradeneeded = () => {
+          const db = request.result;
+          if (!db.objectStoreNames.contains(IDB_CONFIG.store)) {
+            db.createObjectStore(IDB_CONFIG.store);
+          }
+        };
+      } catch (err) {
+        reject(err);
+      }
+    }).catch((err) => {
+      console.warn('Ownfoil cache: indexedDB unavailable', err);
+      return null;
+    });
+
+    return openDbPromise;
+  }
+
+  async function withStore(mode, callback) {
+    const db = await openDatabase();
+    if (!db) return null;
+    return new Promise((resolve, reject) => {
+      try {
+        const tx = db.transaction(IDB_CONFIG.store, mode);
+        const store = tx.objectStore(IDB_CONFIG.store);
+        const request = callback(store);
+        tx.oncomplete = () => resolve(request?.result ?? null);
+        tx.onerror = () => reject(tx.error || new Error('indexedDB transaction failed'));
+      } catch (err) {
+        reject(err);
+      }
+    }).catch(() => null);
+  }
+
+  async function idbGet(key) {
+    if (!key) return null;
+    return withStore('readonly', (store) => store.get(key));
+  }
+
+  async function idbPut(key, value) {
+    if (!key) return false;
+    const result = await withStore('readwrite', (store) => store.put(value, key));
+    return result !== null;
+  }
+
+  async function idbDelete(key) {
+    if (!key) return false;
+    const result = await withStore('readwrite', (store) => store.delete(key));
+    return result !== null;
+  }
+
+  function persistToLocalStorage(key, payload) {
+    if (!key || !payload) return;
+    try {
+      localStorage.setItem(key, JSON.stringify(payload));
+    } catch {
+      // Ignore localStorage write failures (quota, private browsing, etc.)
+    }
+  }
+
+  function removeFromLocalStorage(key) {
+    if (!key) return;
+    try {
+      localStorage.removeItem(key);
+    } catch {
+      // Ignore removal errors
+    }
+  }
+
+  function loadFromLocalStorage(key, ttlMs) {
+    if (!key) return null;
+    try {
+      const raw = localStorage.getItem(key);
+      return _deserializeLocalStorage(raw, ttlMs);
+    } catch {
+      return null;
+    }
+  }
+
+  async function loadSnapshotAsync(key, options) {
+    if (!key) return null;
+    const ttlMs = _coerceTtl(options);
+
+    const fromIdb = await idbGet(key);
+    const normalized = _normalizeSnapshotObject(fromIdb, ttlMs);
+    if (normalized) return normalized;
+
+    return loadFromLocalStorage(key, ttlMs);
+  }
+
+  function loadSnapshotSync(key, options) {
+    return loadFromLocalStorage(key, _coerceTtl(options));
+  }
+
+  async function persistSnapshotAsync(key, etag, data) {
+    if (!key || data == null) return;
     const payload = {
       data,
       etag: etag || null,
       savedAt: now(),
     };
-    try {
-      localStorage.setItem(key, JSON.stringify(payload));
-    } catch {
-      // Ignore storage failures (quota, private browsing, etc.)
+
+    let stored = false;
+    if (supportsIndexedDb) {
+      stored = await idbPut(key, payload);
+      if (!stored) {
+        await idbDelete(key);
+      }
     }
+
+    if (!stored) {
+      persistToLocalStorage(key, payload);
+    } else {
+      removeFromLocalStorage(key);
+    }
+  }
+
+  async function touchSnapshotAsync(key, snapshot, etagOverride) {
+    if (!key || !snapshot || snapshot.data == null) return;
+    await persistSnapshotAsync(key, etagOverride || snapshot.etag || null, snapshot.data);
+  }
+
+  async function clearSnapshotAsync(key) {
+    if (!key) return;
+    if (supportsIndexedDb) {
+      await idbDelete(key);
+    }
+    removeFromLocalStorage(key);
+  }
+
+  cacheNs.loadSnapshotAsync = loadSnapshotAsync;
+  cacheNs.persistSnapshotAsync = persistSnapshotAsync;
+  cacheNs.touchSnapshotAsync = touchSnapshotAsync;
+  cacheNs.clearSnapshotAsync = clearSnapshotAsync;
+
+  cacheNs.loadSnapshot = function loadSnapshot(key, options) {
+    return loadSnapshotSync(key, options);
+  };
+
+  cacheNs.persistSnapshot = function persistSnapshot(key, etag, data) {
+    persistSnapshotAsync(key, etag, data);
   };
 
   cacheNs.touchSnapshot = function touchSnapshot(key, snapshot, etagOverride) {
-    if (!snapshot || snapshot.data == null) return;
-    cacheNs.persistSnapshot(key, etagOverride || snapshot.etag || null, snapshot.data);
+    touchSnapshotAsync(key, snapshot, etagOverride);
   };
 
   cacheNs.createLibraryCombinedManager = function createLibraryCombinedManager(options = {}) {
     const storageKey = cacheKeys.library;
     if (!storageKey) {
       return {
-        load: () => null,
-        persist: () => {},
-        touch: () => {},
-        clear: () => {},
+        load: async () => null,
+        persist: async () => {},
+        touch: async () => {},
+        clear: async () => {},
       };
     }
 
@@ -95,35 +243,46 @@
       overrides: etags.overrides || null,
     });
 
-    const load = () => {
-      if (typeof cacheNs.loadSnapshot !== 'function') return null;
-      try {
-        const snapshot = cacheNs.loadSnapshot(storageKey, options);
-        if (!snapshot || snapshot.isFresh === false) return null;
-        const data = snapshot.data;
-        if (!data || typeof data !== 'object') return null;
-        if (data.version !== version) return null;
-        if (!Array.isArray(data.games)) return null;
+    const sanitizeOverridesState = (raw) => {
+      if (!raw || typeof raw !== 'object') {
         return {
-          version,
-          games: data.games,
-          totalGames: Number.isFinite(data.totalGames) ? data.totalGames : data.games.length,
-          metadataEntries: typeof data.metadataEntries === 'object' && data.metadataEntries
-            ? data.metadataEntries
-            : {},
-          baseDisplayByPrefix: typeof data.baseDisplayByPrefix === 'object' && data.baseDisplayByPrefix
-            ? data.baseDisplayByPrefix
-            : {},
-          etags: normalizeEtags(data.etags || {}),
-          raw: snapshot,
+          items: [],
+          redirects: {},
+          busters: [],
         };
-      } catch {
-        return null;
       }
+      return {
+        items: Array.isArray(raw.items) ? raw.items : [],
+        redirects: (raw.redirects && typeof raw.redirects === 'object') ? raw.redirects : {},
+        busters: Array.isArray(raw.busters) ? raw.busters : [],
+      };
     };
 
-    const persist = (payload, etags) => {
-      if (typeof cacheNs.persistSnapshot !== 'function') return;
+    const load = async () => {
+      const snapshot = await loadSnapshotAsync(storageKey, options);
+      if (!snapshot || snapshot.isFresh === false) return null;
+      const data = snapshot.data;
+      if (!data || typeof data !== 'object') return null;
+      if (data.version !== version) return null;
+      if (!Array.isArray(data.games)) return null;
+
+      return {
+        version,
+        games: data.games,
+        totalGames: Number.isFinite(data.totalGames) ? data.totalGames : data.games.length,
+        metadataEntries: typeof data.metadataEntries === 'object' && data.metadataEntries
+          ? data.metadataEntries
+          : {},
+        baseDisplayByPrefix: typeof data.baseDisplayByPrefix === 'object' && data.baseDisplayByPrefix
+          ? data.baseDisplayByPrefix
+          : {},
+        overridesState: sanitizeOverridesState(data.overridesState),
+        etags: normalizeEtags(data.etags || {}),
+        raw: snapshot,
+      };
+    };
+
+    const persist = async (payload, etags) => {
       if (!payload || !Array.isArray(payload.games)) return;
       const normalizedEtags = normalizeEtags(etags || {});
       const data = {
@@ -136,24 +295,20 @@
         baseDisplayByPrefix: typeof payload.baseDisplayByPrefix === 'object' && payload.baseDisplayByPrefix
           ? payload.baseDisplayByPrefix
           : {},
+        overridesState: sanitizeOverridesState(payload.overridesState),
         etags: normalizedEtags,
       };
-      cacheNs.persistSnapshot(storageKey, combineEtags(normalizedEtags), data);
+      await persistSnapshotAsync(storageKey, combineEtags(normalizedEtags), data);
     };
 
-    const touch = (loadedSnapshot, overrideEtags) => {
-      if (typeof cacheNs.touchSnapshot !== 'function') return;
+    const touch = async (loadedSnapshot, overrideEtags) => {
       if (!loadedSnapshot || !loadedSnapshot.raw) return;
       const etagsToUse = normalizeEtags(overrideEtags || loadedSnapshot.etags || {});
-      cacheNs.touchSnapshot(storageKey, loadedSnapshot.raw, combineEtags(etagsToUse));
+      await touchSnapshotAsync(storageKey, loadedSnapshot.raw, combineEtags(etagsToUse));
     };
 
-    const clear = () => {
-      try {
-        localStorage.removeItem(storageKey);
-      } catch {
-        // Ignore storage errors (e.g., private browsing, quota issues)
-      }
+    const clear = async () => {
+      await clearSnapshotAsync(storageKey);
     };
 
     return { load, persist, touch, clear };
@@ -165,42 +320,54 @@
       return Promise.reject(new Error('conditionalFetch requires url and storageKey'));
     }
 
-    const cached = cacheNs.loadSnapshot(storageKey, options);
-    const cachedEtag = cached?.etag || null;
+    return (async () => {
+      const cached = await loadSnapshotAsync(storageKey, options);
+      const cachedEtag = cached?.etag || null;
 
-    return new Promise((resolve, reject) => {
-      $.ajax({
-        url,
-        method: 'GET',
-        dataType: 'json',
-        ifModified: true,
-        beforeSend: (xhr) => {
-          if (cachedEtag) xhr.setRequestHeader('If-None-Match', cachedEtag);
-        },
-        success: (data, _statusText, xhr) => {
-          const responseEtag = xhr.getResponseHeader('ETag') || xhr.getResponseHeader('etag') || null;
-          if (data != null) {
-            cacheNs.persistSnapshot(storageKey, responseEtag, data);
-            resolve({ data, etag: responseEtag, fromCache: false });
-            return;
-          }
+      return new Promise((resolve, reject) => {
+        $.ajax({
+          url,
+          method: 'GET',
+          dataType: 'json',
+          ifModified: true,
+          beforeSend: (xhr) => {
+            if (cachedEtag) xhr.setRequestHeader('If-None-Match', cachedEtag);
+          },
+          success: async (data, _statusText, xhr) => {
+            const responseEtag = xhr.getResponseHeader('ETag') || xhr.getResponseHeader('etag') || null;
+            const status = Number(xhr?.status);
+            const notModified = status === 304;
 
-          if (cached && cached.data != null) {
-            cacheNs.touchSnapshot(storageKey, cached, responseEtag || cached.etag || null);
-            resolve({ data: cached.data, etag: responseEtag || cached.etag || null, fromCache: true });
-            return;
-          }
+            if (data != null) {
+              await persistSnapshotAsync(storageKey, responseEtag, data);
+              resolve({ data, etag: responseEtag, fromCache: false, notModified: false, staleFallback: false });
+              return;
+            }
 
-          resolve({ data: null, etag: responseEtag || null, fromCache: false });
-        },
-        error: () => {
-          if (allowStaleFallback && cached && cached.data != null && cached.isFresh) {
-            resolve({ data: cached.data, etag: cached.etag || null, fromCache: true });
-            return;
-          }
-          reject(new Error(`Failed to fetch ${url}`));
-        },
+            if (cached && cached.data != null) {
+              await touchSnapshotAsync(storageKey, cached, responseEtag || cached.etag || null);
+              resolve({
+                data: notModified ? cached.data : cached.data,
+                etag: responseEtag || cached.etag || null,
+                fromCache: true,
+                notModified,
+                staleFallback: false,
+              });
+              return;
+            }
+
+            resolve({ data: null, etag: responseEtag || null, fromCache: false, notModified, staleFallback: false });
+          },
+          error: async () => {
+            if (allowStaleFallback && cached && cached.data != null && cached.isFresh) {
+              await touchSnapshotAsync(storageKey, cached, cached.etag || null);
+              resolve({ data: cached.data, etag: cached.etag || null, fromCache: true, notModified: false, staleFallback: true });
+              return;
+            }
+            reject(new Error(`Failed to fetch ${url}`));
+          },
+        });
       });
-    });
+    })();
   };
 })(window, window.jQuery);

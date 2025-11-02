@@ -320,7 +320,7 @@
 
     function restoreCombinedSnapshot(snapshot) {
         if (!snapshot || !Array.isArray(snapshot.games)) return false;
-        games = snapshot.games.slice();
+        games = snapshot.games.map(g => ({ ...g }));
         totalGames = Number.isFinite(snapshot.totalGames) ? snapshot.totalGames : games.length;
 
         setMetadataState(snapshot.metadataEntries, snapshot.baseDisplayByPrefix);
@@ -459,12 +459,16 @@
                     data: payload,
                     etag: result?.etag || null,
                     fromCache: !!result?.fromCache,
+                    notModified: result?.notModified === true,
+                    staleFallback: result?.staleFallback === true,
                 };
             }).catch(() => ({
                 data: null,
                 etag: null,
                 fromCache: false,
                 error: true,
+                notModified: false,
+                staleFallback: false,
             }));
         }
 
@@ -478,10 +482,19 @@
                         data: data && typeof data === 'object' ? data : null,
                         etag: xhr?.getResponseHeader('ETag') || xhr?.getResponseHeader('etag') || null,
                         fromCache: false,
+                        notModified: xhr?.status === 304,
+                        staleFallback: false,
                     });
                 },
                 error() {
-                    resolve({ data: null, etag: null, fromCache: false, error: true });
+                    resolve({
+                        data: null,
+                        etag: null,
+                        fromCache: false,
+                        error: true,
+                        notModified: false,
+                        staleFallback: false,
+                    });
                 },
             });
         });
@@ -499,12 +512,16 @@
                     data: payload,
                     etag: result?.etag || null,
                     fromCache: !!result?.fromCache,
+                    notModified: result?.notModified === true,
+                    staleFallback: result?.staleFallback === true,
                 };
             }).catch(() => ({
                 data: null,
                 etag: null,
                 fromCache: false,
                 error: true,
+                notModified: false,
+                staleFallback: false,
             }));
         }
 
@@ -518,10 +535,19 @@
                         data: data && typeof data === 'object' ? data : null,
                         etag: xhr?.getResponseHeader('ETag') || xhr?.getResponseHeader('etag') || null,
                         fromCache: false,
+                        notModified: xhr?.status === 304,
+                        staleFallback: false,
                     });
                 },
                 error() {
-                    resolve({ data: null, etag: null, fromCache: false, error: true });
+                    resolve({
+                        data: null,
+                        etag: null,
+                        fromCache: false,
+                        error: true,
+                        notModified: false,
+                        staleFallback: false,
+                    });
                 },
             });
         });
@@ -1179,60 +1205,78 @@
         });
     }
 
-    $(document).ready(function () {
+    $(document).ready(() => {
         const overridesModule = Overrides;
 
-        // Bind overrides module to our environment
-        if (overridesModule?.bindEnvironment) {
-            overridesModule.bindEnvironment({
-                getGames: () => games,
-                applyFilters: (options) => applyFilters(options)
-            });
-        }
-        if (overridesModule?.initDomBindings) {
-            overridesModule.initDomBindings();
-        }
-
-        const savedItemsPerPage = localStorage.getItem('itemsPerPage');
-        if (savedItemsPerPage) itemsPerPage = parseInt(savedItemsPerPage);
-
-        const savedCurrentView = localStorage.getItem('currentView');
-        if (savedCurrentView) currentView = savedCurrentView;
-
-        const savedCardSize = localStorage.getItem('cardSize');
-        if (savedCardSize) cardSize = parseInt(savedCardSize);
-
-        const savedCurrentPage = loadStoredPage();
-        if (savedCurrentPage !== null) currentPage = savedCurrentPage;
-
-        paginationController = window.Ownfoil?.Pagination?.create({
-            container: '#paginationControls',
-            getCurrentPage: () => currentPage,
-            setCurrentPage: (page) => { setCurrentPageValue(page); },
-            getItemsPerPage: () => itemsPerPage,
-            onPageChange: () => renderGames()
-        });
-        updatePaginationSummary(Array.isArray(filteredGames) ? filteredGames.length : 0);
-
-        // Fetch overrides for everyone, then fetch games and fold in redirect/projection data before applying explicit overrides
-        const combinedSnapshot = CombinedCache?.load ? CombinedCache.load() : null;
-        if (combinedSnapshot?.etags) {
-            updateKnownEtags(combinedSnapshot.etags);
-        }
-
-        const metadataPromise = fetchMetadata();
-        const overridesPromise = (overridesModule?.fetchOverrides)
-            ? overridesModule.fetchOverrides()
-            : Promise.resolve(null);
-        const titlesPromise = fetchGames();
-
-        window.Ownfoil.onOverridesUpdated = () => {
-            if (suppressNextOverridesMetadataRefresh) {
-                suppressNextOverridesMetadataRefresh = false;
-                return;
+        async function bootstrap() {
+            if (overridesModule?.bindEnvironment) {
+                overridesModule.bindEnvironment({
+                    getGames: () => games,
+                    applyFilters: (options) => applyFilters(options),
+                });
             }
-            fetchMetadata()
-                .then((metaResult) => {
+            if (overridesModule?.initDomBindings) {
+                overridesModule.initDomBindings();
+            }
+
+            const savedItemsPerPage = localStorage.getItem('itemsPerPage');
+            if (savedItemsPerPage) itemsPerPage = parseInt(savedItemsPerPage);
+
+            const savedCurrentView = localStorage.getItem('currentView');
+            if (savedCurrentView) currentView = savedCurrentView;
+
+            const savedCardSize = localStorage.getItem('cardSize');
+            if (savedCardSize) cardSize = parseInt(savedCardSize);
+
+            const savedCurrentPage = loadStoredPage();
+            if (savedCurrentPage !== null) currentPage = savedCurrentPage;
+
+            paginationController = window.Ownfoil?.Pagination?.create({
+                container: '#paginationControls',
+                getCurrentPage: () => currentPage,
+                setCurrentPage: (page) => { setCurrentPageValue(page); },
+                getItemsPerPage: () => itemsPerPage,
+                onPageChange: () => renderGames()
+            });
+            updatePaginationSummary(Array.isArray(filteredGames) ? filteredGames.length : 0);
+
+            let combinedSnapshot = null;
+            let restoredFromSnapshot = false;
+
+            if (CombinedCache?.load) {
+                try {
+                    combinedSnapshot = await CombinedCache.load();
+                } catch (err) {
+                    console.warn('Ownfoil cache: failed to load combined snapshot', err);
+                }
+            }
+
+            if (combinedSnapshot?.etags) {
+                updateKnownEtags(combinedSnapshot.etags);
+            }
+            if (combinedSnapshot && Array.isArray(combinedSnapshot.games)) {
+                restoredFromSnapshot = restoreCombinedSnapshot(combinedSnapshot);
+                if (restoredFromSnapshot && overridesModule?.hydrateFromSnapshot) {
+                    overridesModule.hydrateFromSnapshot(combinedSnapshot.overridesState);
+                }
+                if (restoredFromSnapshot) {
+                    loadFiltersFromStorage();
+                }
+            }
+
+            const metadataPromise = fetchMetadata();
+            const overridesPromise = (overridesModule?.fetchOverrides)
+                ? overridesModule.fetchOverrides()
+                : Promise.resolve(null);
+            const titlesPromise = fetchGames();
+
+            window.Ownfoil.onOverridesUpdated = async () => {
+                if (suppressNextOverridesMetadataRefresh) {
+                    suppressNextOverridesMetadataRefresh = false;
+                    return;
+                }
+                try {
+                    const metaResult = await fetchMetadata();
                     const payload = metaResult && typeof metaResult.data === 'object' ? metaResult.data : {};
                     applyMetadataPayload(payload);
                     updateKnownEtags({ metadata: metaResult?.etag ?? lastKnownEtags.metadata });
@@ -1241,14 +1285,16 @@
                     sortGamesInPlace(games);
                     filteredGames = pruneGhostsInPlace(games.slice());
                     baseFilteredGames = filteredGames.slice();
+
                     if (metaResult?.error) {
-                        CombinedCache?.clear?.();
-                    } else {
-                        CombinedCache?.persist?.({
+                        if (CombinedCache?.clear) await CombinedCache.clear();
+                    } else if (CombinedCache?.persist) {
+                        await CombinedCache.persist({
                             games,
                             totalGames,
                             metadataEntries,
                             baseDisplayByPrefix,
+                            overridesState: overridesModule?.getSnapshotForCache?.(),
                         }, {
                             titles: lastKnownEtags.titles,
                             metadata: lastKnownEtags.metadata,
@@ -1256,124 +1302,146 @@
                         });
                     }
                     applyFilters({ preservePage: true });
-                })
-                .catch(() => {
+                } catch (err) {
+                    console.warn('Ownfoil overrides refresh failed', err);
                     applyMetadataToGames(games);
                     sortGamesInPlace(games);
                     filteredGames = pruneGhostsInPlace(games.slice());
                     baseFilteredGames = filteredGames.slice();
                     applyFilters({ preservePage: true });
-                });
-        };
+                }
+            };
 
-        suppressNextOverridesMetadataRefresh = true;
+            suppressNextOverridesMetadataRefresh = true;
 
-        Promise.all([metadataPromise, overridesPromise, titlesPromise])
-            .then(([metadataResult, overridesResult, titlesResult]) => {
-                const overridesFlags = overridesResult || {};
-                const titlesEtag = titlesResult?.etag || null;
-                const metadataEtag = metadataResult?.etag || null;
-                const overridesEtag = overridesFlags?.etag || null;
-                const overridesFromCache = overridesFlags?.fromCache !== false;
-                const allFromCache =
-                    metadataResult?.fromCache === true &&
-                    titlesResult?.fromCache === true &&
-                    overridesFromCache;
+            let metadataResult;
+            let overridesResult;
+            let titlesResult;
+            try {
+                [metadataResult, overridesResult, titlesResult] = await Promise.all([
+                    metadataPromise,
+                    overridesPromise,
+                    titlesPromise,
+                ]);
+            } catch (err) {
+                console.error('Ownfoil bootstrap fetch failed', err);
+                applyMetadataToGames(games);
+                sortGamesInPlace(games);
+                filteredGames = pruneGhostsInPlace(games.slice());
+                baseFilteredGames = filteredGames.slice();
+                loadFiltersFromStorage();
+                suppressNextOverridesMetadataRefresh = false;
+                if (CombinedCache?.clear) await CombinedCache.clear();
+                return;
+            }
 
-                const etagsForComparison = {
-                    titles: titlesEtag,
-                    metadata: metadataEtag,
-                    overrides: overridesEtag,
-                };
+            const overridesFlags = overridesResult || {};
+            const titlesEtag = titlesResult?.etag || null;
+            const metadataEtag = metadataResult?.etag || null;
+            const overridesEtag = overridesFlags?.etag || null;
 
-                const snapshotMatches =
-                    combinedSnapshot &&
-                    Array.isArray(combinedSnapshot.games) &&
-                    combinedSnapshot.etags &&
-                    combinedSnapshot.etags.titles === etagsForComparison.titles &&
-                    combinedSnapshot.etags.metadata === etagsForComparison.metadata &&
-                    combinedSnapshot.etags.overrides === etagsForComparison.overrides;
+            const etagsForComparison = {
+                titles: titlesEtag,
+                metadata: metadataEtag,
+                overrides: overridesEtag,
+            };
 
-                if (combinedSnapshot && snapshotMatches && allFromCache) {
-                    if (restoreCombinedSnapshot(combinedSnapshot)) {
-                        if (overridesModule?.applyRedirectsToGames) {
-                            overridesModule.applyRedirectsToGames(games);
-                        }
-                        if (overridesModule?.reapplyAllOverridesToGames) {
-                            overridesModule.reapplyAllOverridesToGames(games);
-                        }
-                        updateKnownEtags({
-                            titles: etagsForComparison.titles ?? combinedSnapshot.etags.titles,
-                            metadata: etagsForComparison.metadata ?? combinedSnapshot.etags.metadata,
-                            overrides: etagsForComparison.overrides ?? combinedSnapshot.etags.overrides,
-                        });
-                        CombinedCache?.touch?.(combinedSnapshot, etagsForComparison);
-                        loadFiltersFromStorage();
-                        suppressNextOverridesMetadataRefresh = false;
-                        return;
+            const allNotModified =
+                metadataResult?.notModified === true &&
+                titlesResult?.notModified === true &&
+                (overridesResult == null || overridesFlags?.notModified === true);
+
+            const snapshotMatches =
+                combinedSnapshot &&
+                Array.isArray(combinedSnapshot.games) &&
+                combinedSnapshot.etags &&
+                combinedSnapshot.etags.titles === etagsForComparison.titles &&
+                combinedSnapshot.etags.metadata === etagsForComparison.metadata &&
+                combinedSnapshot.etags.overrides === etagsForComparison.overrides;
+
+            if (combinedSnapshot && snapshotMatches && allNotModified) {
+                if (!restoredFromSnapshot) {
+                    restoredFromSnapshot = restoreCombinedSnapshot(combinedSnapshot);
+                    if (restoredFromSnapshot && overridesModule?.hydrateFromSnapshot) {
+                        overridesModule.hydrateFromSnapshot(combinedSnapshot.overridesState);
                     }
-                }
-
-                const titlesPayload = titlesResult && typeof titlesResult.data === 'object'
-                    ? titlesResult.data
-                    : null;
-                if (titlesPayload) {
-                    hydrateGamesFromPayload(titlesPayload);
+                    if (restoredFromSnapshot) {
+                        loadFiltersFromStorage();
+                    }
                 } else {
-                    totalGames = 0;
-                    games = [];
-                    filteredGames = [];
-                    baseFilteredGames = [];
+                    applyFilters({ preservePage: true });
                 }
-
-                const metadataPayload = metadataResult && typeof metadataResult.data === 'object'
-                    ? metadataResult.data
-                    : {};
-                applyMetadataPayload(metadataPayload);
-
-                if (overridesFlags?.redirectsChanged && overridesModule?.applyRedirectsToGames) {
-                    overridesModule.applyRedirectsToGames(games);
-                }
-                if (overridesFlags?.overridesChanged && overridesModule?.reapplyAllOverridesToGames) {
-                    overridesModule.reapplyAllOverridesToGames(games);
-                }
-
-                applyMetadataToGames(games);
-                sortGamesInPlace(games);
-                filteredGames = pruneGhostsInPlace(games.slice());
-                baseFilteredGames = filteredGames.slice();
                 updateKnownEtags({
-                    titles: titlesEtag,
-                    metadata: metadataEtag,
-                    overrides: overridesEtag,
+                    titles: etagsForComparison.titles ?? combinedSnapshot.etags.titles,
+                    metadata: etagsForComparison.metadata ?? combinedSnapshot.etags.metadata,
+                    overrides: etagsForComparison.overrides ?? combinedSnapshot.etags.overrides,
                 });
-                const hadErrors = metadataResult?.error || titlesResult?.error || overridesFlags?.error;
-                if (hadErrors) {
-                    CombinedCache?.clear?.();
-                } else {
-                    CombinedCache?.persist?.({
-                        games,
-                        totalGames,
-                        metadataEntries,
-                        baseDisplayByPrefix,
-                    }, {
-                        titles: lastKnownEtags.titles,
-                        metadata: lastKnownEtags.metadata,
-                        overrides: lastKnownEtags.overrides,
-                    });
+                if (CombinedCache?.touch) {
+                    await CombinedCache.touch(combinedSnapshot, etagsForComparison);
                 }
-                loadFiltersFromStorage();
                 suppressNextOverridesMetadataRefresh = false;
-            })
-            .catch(() => {
-                applyMetadataToGames(games);
-                sortGamesInPlace(games);
-                filteredGames = pruneGhostsInPlace(games.slice());
-                baseFilteredGames = filteredGames.slice();
-                loadFiltersFromStorage();
-                suppressNextOverridesMetadataRefresh = false;
-                CombinedCache?.clear?.();
+                return;
+            }
+
+            const titlesPayload = titlesResult && typeof titlesResult.data === 'object'
+                ? titlesResult.data
+                : null;
+            if (titlesPayload) {
+                hydrateGamesFromPayload(titlesPayload);
+            } else {
+                totalGames = 0;
+                games = [];
+                filteredGames = [];
+                baseFilteredGames = [];
+            }
+
+            const metadataPayload = metadataResult && typeof metadataResult.data === 'object'
+                ? metadataResult.data
+                : {};
+            applyMetadataPayload(metadataPayload);
+
+            if (overridesFlags?.redirectsChanged && overridesModule?.applyRedirectsToGames) {
+                overridesModule.applyRedirectsToGames(games);
+            }
+            if (overridesFlags?.overridesChanged && overridesModule?.reapplyAllOverridesToGames) {
+                overridesModule.reapplyAllOverridesToGames(games);
+            }
+
+            applyMetadataToGames(games);
+            sortGamesInPlace(games);
+            filteredGames = pruneGhostsInPlace(games.slice());
+            baseFilteredGames = filteredGames.slice();
+            updateKnownEtags({
+                titles: titlesEtag,
+                metadata: metadataEtag,
+                overrides: overridesEtag,
             });
+
+            const hadErrors = metadataResult?.error || titlesResult?.error || overridesFlags?.error;
+            if (hadErrors) {
+                if (CombinedCache?.clear) await CombinedCache.clear();
+            } else if (CombinedCache?.persist) {
+                await CombinedCache.persist({
+                    games,
+                    totalGames,
+                    metadataEntries,
+                    baseDisplayByPrefix,
+                    overridesState: overridesModule?.getSnapshotForCache?.(),
+                }, {
+                    titles: lastKnownEtags.titles,
+                    metadata: lastKnownEtags.metadata,
+                    overrides: lastKnownEtags.overrides,
+                });
+            }
+            loadFiltersFromStorage();
+            suppressNextOverridesMetadataRefresh = false;
+        }
+
+        bootstrap().catch((err) => {
+            console.error('Ownfoil bootstrap failed', err);
+            suppressNextOverridesMetadataRefresh = false;
+            loadFiltersFromStorage();
+        });
 
         function recalcPageForNewPageSize(prevItemsPerPage) {
             const totalItems = Array.isArray(filteredGames) ? filteredGames.length : 0;
