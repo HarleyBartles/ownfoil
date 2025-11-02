@@ -206,67 +206,11 @@ def compute_shop_files_fingerprint_rows() -> list[tuple[int, int, str]]:
 
 
 def compute_shop_snapshot_hash() -> str:
-    from overrides import load_or_generate_overrides_snapshot
+    from shop import compute_shop_snapshot_hash as _shop_hash
 
-    overrides_snapshot = load_or_generate_overrides_snapshot() or {}
-    payload = overrides_snapshot.get("payload") or {}
-    items = payload.get("items") if isinstance(payload, dict) else None
-    redirects = payload.get("redirects") if isinstance(payload, dict) else None
-
-    def _norm_item(it: dict) -> dict:
-        return {
-            "app_id": (it.get("app_id") or "").strip().upper(),
-            "enabled": bool(it.get("enabled", True)),
-            "corrected_title_id": (it.get("corrected_title_id") or "").strip().upper() or None,
-            "name": it.get("name"),
-            "region": it.get("region"),
-            "release_date": it.get("release_date"),
-            "description": it.get("description"),
-            "banner_path": it.get("banner_path"),
-            "icon_path": it.get("icon_path"),
-            "category": it.get("category"),
-        }
-
-    norm_items = []
-    if isinstance(items, list):
-        for it in items:
-            if isinstance(it, dict):
-                norm_items.append(_norm_item(it))
-    norm_items.sort(key=lambda d: d["app_id"])
-
-    norm_redirects = []
-    if isinstance(redirects, dict):
-        for raw_app_id, data in redirects.items():
-            if not isinstance(data, dict):
-                continue
-            norm_redirects.append({
-                "app_id": (raw_app_id or "").strip().upper(),
-                "corrected_title_id": (data.get("corrected_title_id") or "").strip().upper() or None,
-                "projection": data.get("projection"),
-            })
-    norm_redirects.sort(key=lambda d: d["app_id"])
-
-    ov_hash = hashlib.sha256(
-        json.dumps(
-            {"items": norm_items, "redirects": norm_redirects},
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8")
-    ).hexdigest()
-
-    library_snapshot = load_json(LIBRARY_CACHE_FILE) or {}
-    lib_hash = library_snapshot.get("hash") or ""
-
-    files_fp = compute_shop_files_fingerprint_rows()
-
-    payload = {
-        "overrides_hash": ov_hash,
-        "library_hash": lib_hash,
-        "files": files_fp,
-    }
-    return hashlib.sha256(
-        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    ).hexdigest()
+    # Delegate to the shop module's hash builder so validation compares against
+    # the exact value written into the snapshot on generation.
+    return _shop_hash()
 
 
 def is_shop_snapshot_current(saved_snapshot: Optional[dict]) -> bool:

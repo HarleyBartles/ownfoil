@@ -76,6 +76,67 @@ def encrypt_shop(shop):
     binary_data = b'TINFOIL' + flag.to_bytes(1, byteorder='little') + sessionKey + sz.to_bytes(8, 'little') + buf
     return binary_data
 
+def compute_shop_snapshot_hash():
+    # The shop payload depends on a subset of override fields. Build a compact
+    # fingerprint that ignores flags (like suppress_missing) which do not affect
+    # the shop output.
+    overrides_snapshot = load_or_generate_overrides_snapshot() or {}
+    payload = overrides_snapshot.get("payload") or {}
+    items = payload.get("items") if isinstance(payload, dict) else None
+    redirects = payload.get("redirects") if isinstance(payload, dict) else None
+
+    def _norm_item(it: dict) -> dict:
+        return {
+            "app_id": (it.get("app_id") or "").strip().upper(),
+            "enabled": bool(it.get("enabled", True)),
+            "corrected_title_id": (it.get("corrected_title_id") or "").strip().upper() or None,
+            "name": it.get("name"),
+            "region": it.get("region"),
+            "release_date": it.get("release_date"),
+            "description": it.get("description"),
+            "banner_path": it.get("banner_path"),
+            "icon_path": it.get("icon_path"),
+            "category": it.get("category"),
+        }
+
+    norm_items = []
+    if isinstance(items, list):
+        for it in items:
+            if isinstance(it, dict):
+                norm_items.append(_norm_item(it))
+    norm_items.sort(key=lambda d: d["app_id"])
+
+    norm_redirects = []
+    if isinstance(redirects, dict):
+        for raw_app_id, data in redirects.items():
+            if not isinstance(data, dict):
+                continue
+            norm_redirects.append({
+                "app_id": (raw_app_id or "").strip().upper(),
+                "corrected_title_id": (data.get("corrected_title_id") or "").strip().upper() or None,
+                "projection": data.get("projection"),
+            })
+    norm_redirects.sort(key=lambda d: d["app_id"])
+
+    # Library snapshot hash (includes TitleDB commit)
+    lib_snap = load_json(LIBRARY_CACHE_FILE) or {}
+    lib_hash = lib_snap.get("hash") or ""
+
+    # Files fingerprint (sizes & basenames)
+    files_fp = _compute_files_fingerprint_rows()
+
+    shop_hash = {
+        "overrides": {
+            "items": norm_items,
+            "redirects": norm_redirects,
+        },
+        "library_hash": lib_hash,
+        "files": files_fp,
+    }
+    return hashlib.sha256(
+        json.dumps(shop_hash, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
 def _generate_shop_snapshot():
     # Build only what Tinfoil needs
     logger.info("Generating shop snapshot...")
@@ -90,11 +151,11 @@ def _generate_shop_snapshot():
         }
 
         snap = {
-            "hash": _current_shop_hash(),
-            "snapshot_version": SHOP_SNAPSHOT_VERSION,
-            "generated_at": datetime.datetime.utcnow().isoformat(timespec="seconds"),
-            "payload": payload,
-        }
+        "hash": compute_shop_snapshot_hash(),
+        "snapshot_version": SHOP_SNAPSHOT_VERSION,
+        "generated_at": datetime.datetime.utcnow().isoformat(timespec="seconds"),
+        "payload": payload,
+    }
         save_json(snap, SHOP_CACHE_FILE)
         logger.info("Generating shop snapshot done.")
         return snap
@@ -503,24 +564,3 @@ def _compute_files_fingerprint_rows():
         base = os.path.basename(path or "") if path else ""
         fp.append((int(fid), int(size or 0), base))
     return fp
-
-def _current_shop_hash():
-    # Overrides snapshot (hash + titledb_commit inside it)
-    ov_snap = load_or_generate_overrides_snapshot()
-    ov_hash = ov_snap.get("hash") or ""
-
-    # Library snapshot (hash + titledb_commit inside it)
-    lib_snap = load_json(LIBRARY_CACHE_FILE) or {}
-    lib_hash = lib_snap.get("hash") or ""
-
-    # Files fingerprint (sizes & basenames)
-    files_fp = _compute_files_fingerprint_rows()
-
-    shop_hash = {
-        "overrides_hash": ov_hash,
-        "library_hash": lib_hash,
-        "files": files_fp,
-    }
-    return hashlib.sha256(
-        json.dumps(shop_hash, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    ).hexdigest()
