@@ -26,7 +26,7 @@ MetadataRecord = Dict[str, Any]
 TOKEN_RE = re.compile(r"[a-z0-9]+")
 COMBINING_MARKS_RE = re.compile(r"[\u0300-\u036f]")
 
-@metadata_blueprint.route("/library", methods=["GET"])
+@metadata_blueprint.route("", methods=["GET"])
 @access_required("shop")
 def get_library_metadata():
     payload, etag_hash = generate_library_metadata()
