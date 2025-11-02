@@ -6,7 +6,7 @@
   window.DEFAULT_BANNER = `https://placehold.co/400x225/png?text=${encodeURIComponent(window.PLACEHOLDER_TEXT)}`;
   window.DEFAULT_ICON   = `https://placehold.co/400x400/png?text=${encodeURIComponent(window.PLACEHOLDER_TEXT)}`;
   window.IS_ADMIN = {{ (current_user.is_authenticated and current_user.is_admin) | tojson }};
-  window.DISPLAY_GHOST_CARDS = {{ (display_ghost_cards | default(false, true)) | tojson }};
+  window.HIDE_GHOST_CARDS = {{ (hide_ghost_cards | default(true, true)) | tojson }};
 </script>
 {% include 'nav.html' %}
 <div id="content" class="container-fluid mt-3">
@@ -176,8 +176,8 @@
 <script>
     const isAdminUser = (window.IS_ADMIN === true || window.IS_ADMIN === 'true');
     const Overrides = window.Ownfoil?.Overrides || null;
-    const displayGhostCards = (window.DISPLAY_GHOST_CARDS === true || window.DISPLAY_GHOST_CARDS === 'true');
-    const shouldHideGhostCards = !isAdminUser && !displayGhostCards;
+    const hideGhostCards = (window.HIDE_GHOST_CARDS === true || window.HIDE_GHOST_CARDS === 'true');
+    const shouldHideGhostCards = !isAdminUser && hideGhostCards;
     const isGhostCard = (game) => game?.suppressed_missing === true;
     const pruneGhostsInPlace = (list) => {
         if (!shouldHideGhostCards || !Array.isArray(list) || list.length === 0) return list;

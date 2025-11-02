@@ -66,7 +66,7 @@ DEFAULT_SETTINGS = {
         "host": "",
         "hauth": "",
         "placeholder_text": "Image Unavailable",
-        "display_ghost_cards": False,
+        "hide_ghost_cards": True,
     }
 }
 

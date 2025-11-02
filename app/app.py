@@ -308,13 +308,14 @@ def tinfoil_access(f):
 def access_shop():
     # Ensure we render with the latest on-disk configuration (e.g., shop display toggles)
     reload_conf()
+    shop_conf = app_settings.get('shop', {})
     return render_template(
         'index.html',
         title='Library',
         admin_account_created=admin_account_created(),
         valid_keys=app_settings['titles']['valid_keys'],
-        placeholder_text=app_settings['shop']['placeholder_text'],
-        display_ghost_cards=app_settings['shop'].get('display_ghost_cards', False)
+        placeholder_text=shop_conf.get('placeholder_text', 'Image Unavailable'),
+        hide_ghost_cards=bool(shop_conf.get('hide_ghost_cards', True))
     )
 
 @access_required('shop')

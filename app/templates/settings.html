@@ -345,11 +345,11 @@
                         can access the content. <strong>Strongly suggested to enable it for security</strong>.</div>
                 </div>
                 <div class="mb-3 form-check">
-                    <input type="checkbox" class="form-check-input" id="displayGhostCardsCheck"
-                        aria-describedby="displayGhostCardsCheckHelp">
-                    <label class="form-check-label" for="displayGhostCardsCheck">Display ghost cards to all users</label>
-                    <div id="displayGhostCardsCheckHelp" class="form-text">
-                        When enabled, suppressed (ghost) DLC cards remain visible to non-admin shop users.
+                    <input type="checkbox" class="form-check-input" id="hideGhostCardsCheck"
+                        aria-describedby="hideGhostCardsCheckHelp">
+                    <label class="form-check-label" for="hideGhostCardsCheck">Hide ghost cards for shop users</label>
+                    <div id="hideGhostCardsCheckHelp" class="form-text">
+                        When enabled, suppressed (ghost) missing DLC cards are hidden from non-admin shop users.
                     </div>
                 </div>
 
@@ -904,14 +904,14 @@
         const host = $('#shopHostInput').val();
         const isPublic = getCheckboxStatus("publicShopCheck");
         const encrypt = getCheckboxStatus("encryptShopCheck");
-        const displayGhostCards = getCheckboxStatus("displayGhostCardsCheck");
+        const hideGhostCards = getCheckboxStatus("hideGhostCardsCheck");
         const motd = $('#motdTextArea').val();
         const placeholder = ($('#placeholderTextInput').val() || "").trim();
         const data = {
             host: host,
             public: isPublic,
             encrypt: encrypt,
-            display_ghost_cards: displayGhostCards,
+            hide_ghost_cards: hideGhostCards,
             motd: motd,
             placeholder_text: placeholder
         };
@@ -1057,7 +1057,9 @@
             setInputVal("placeholderTextInput", shopSettings['placeholder_text'] || "Image Unavailable");
             $("#publicShopCheck").prop("checked", shopSettings['public']);
             $("#encryptShopCheck").prop("checked", shopSettings['encrypt']);
-            $("#displayGhostCardsCheck").prop("checked", shopSettings['display_ghost_cards']);
+            const hideGhostCardsSetting = shopSettings['hide_ghost_cards'];
+            const hideGhostCardsChecked = (hideGhostCardsSetting === undefined) ? true : hideGhostCardsSetting;
+            $("#hideGhostCardsCheck").prop("checked", hideGhostCardsChecked);
             if (!shopSettings['host']) {
                 $("#missingShopHostAlert").css('display', '');
             } else if (!shopSettings['hauth']) {
@@ -1067,9 +1069,9 @@
 
     });
     {% if admin_account_created == false %}
-    $('#checkboxNewUserAdminAccess').prop('checked', true).attr("disabled", true);
-    $('#checkboxNewUserShopAccess').prop('checked', true).attr("disabled", true);
-    $('#checkboxNewUserBackupAccess').prop('checked', true).attr("disabled", true);
+        $('#checkboxNewUserAdminAccess').prop('checked', true).attr("disabled", true);
+        $('#checkboxNewUserShopAccess').prop('checked', true).attr("disabled", true);
+        $('#checkboxNewUserBackupAccess').prop('checked', true).attr("disabled", true);
     {% endif %}
 </script>
 

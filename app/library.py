@@ -959,14 +959,6 @@ def update_titles():
     if titles_removed > 0:
             logger.info(f"Removed {titles_removed} titles with no owned apps.")
 
-    override_index = build_override_index(include_disabled=False) or {}
-    by_app_override = override_index.get("by_app") if isinstance(override_index, dict) else {}
-    suppressed_app_ids = {
-        (app_id or "").upper()
-        for app_id, payload in (by_app_override or {}).items()
-        if isinstance(payload, dict) and payload.get("suppress_missing")
-    }
-
     titles = get_all_titles()
     for n, title in enumerate(titles):
         have_base = False
@@ -1000,7 +992,6 @@ def update_titles():
         available_dlc_apps = [
             app for app in title_apps
             if app.get('app_type') == APP_TYPE_DLC
-            and (app.get('app_id') or '').upper() not in suppressed_app_ids
         ]
 
         if not available_dlc_apps:
