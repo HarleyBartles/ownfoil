@@ -177,6 +177,7 @@
           g.suppressed_missing = false;
         }
       }
+      g._searchBlob = null;
     });
   };
 
