@@ -484,7 +484,7 @@
     );
   }
 
-  const iconUrlFor = (game) =>{
+  const iconUrlFor = (game) => {
     const ovr = getOverrideForGame(game);
     const ovrUrl = _trimmedOrNull(ovr?.icon_path) || _trimmedOrNull(ovr?.iconUrl);
     if (ovrUrl) return addBuster(ovrUrl, getBuster(game.app_id));

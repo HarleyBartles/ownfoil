@@ -1,8 +1,7 @@
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import create_engine
 from sqlalchemy import event
-from sqlalchemy.orm import joinedload
-from sqlalchemy.orm.exc import NoResultFound
+from sqlalchemy.exc import NoResultFound
 from sqlalchemy.dialects.sqlite import insert  # Use postgresql if using PostgreSQL
 from flask_migrate import Migrate, upgrade
 from alembic.runtime.migration import MigrationContext
@@ -14,6 +13,7 @@ import os, sys
 import shutil
 import logging
 import datetime
+from typing import Any, Optional
 from constants import *
 
 # Retrieve main logger
@@ -82,6 +82,45 @@ class Files(db.Model):
     last_attempt = db.Column(db.DateTime, default=datetime.datetime.utcnow)
 
     library = db.relationship('Libraries', backref=db.backref('files', lazy=True, cascade="all, delete-orphan"))
+    apps = db.relationship('Apps', secondary='app_files', back_populates='files')
+
+    def __init__(
+        self,
+        *,
+        library_id: int,
+        filepath: str,
+        filename: str,
+        folder: Optional[str] = None,
+        extension: Optional[str] = None,
+        size: Optional[int] = None,
+        compressed: bool = False,
+        multicontent: bool = False,
+        nb_content: int = 0,
+        download_count: int = 0,
+        identified: bool = False,
+        identification_type: Optional[str] = None,
+        identification_error: Optional[str] = None,
+        identification_attempts: int = 0,
+        last_attempt: Optional[datetime.datetime] = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(**kwargs)
+        self.library_id = library_id
+        self.filepath = filepath
+        self.filename = filename
+        self.folder = folder
+        self.extension = extension
+        self.size = size
+        self.compressed = compressed
+        self.multicontent = multicontent
+        self.nb_content = nb_content
+        self.download_count = download_count
+        self.identified = identified
+        self.identification_type = identification_type
+        self.identification_error = identification_error
+        self.identification_attempts = identification_attempts
+        if last_attempt is not None:
+            self.last_attempt = last_attempt
 
 class Titles(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -89,6 +128,7 @@ class Titles(db.Model):
     have_base = db.Column(db.Boolean, default=False)
     up_to_date = db.Column(db.Boolean, default=False)
     complete = db.Column(db.Boolean, default=False)
+    apps = db.relationship('Apps', back_populates='title', lazy=True, cascade="all, delete-orphan")
 
 # Association table for many-to-many relationship between Apps and Files
 app_files = db.Table('app_files',
@@ -104,8 +144,8 @@ class Apps(db.Model):
     app_type = db.Column(db.String)
     owned = db.Column(db.Boolean, default=False)
 
-    title = db.relationship('Titles', backref=db.backref('apps', lazy=True, cascade="all, delete-orphan"))
-    files = db.relationship('Files', secondary=app_files, backref=db.backref('apps', lazy='select'))
+    title = db.relationship('Titles', back_populates='apps')
+    files = db.relationship('Files', secondary=app_files, back_populates='apps')
 
     # One-to-one: delete override automatically when an Apps row is deleted
     override = db.relationship(
@@ -117,6 +157,23 @@ class Apps(db.Model):
     )
 
     __table_args__ = (db.UniqueConstraint('app_id', 'app_version', name='uq_apps_app_version'),)
+
+    def __init__(
+        self,
+        *,
+        title_id: int,
+        app_id: Optional[str] = None,
+        app_version: Optional[str] = None,
+        app_type: Optional[str] = None,
+        owned: bool = False,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(**kwargs)
+        self.title_id = title_id
+        self.app_id = app_id
+        self.app_version = app_version
+        self.app_type = app_type
+        self.owned = owned
 
 class User(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -188,6 +245,49 @@ class AppOverrides(db.Model):
     @property
     def app_id(self):
         return self.app.app_id if self.app else None
+
+    def __init__(
+        self,
+        *,
+        app: "Apps",
+        name: Optional[str] = None,
+        release_date: Optional[datetime.date] = None,
+        region: Optional[str] = None,
+        description: Optional[str] = None,
+        content_type: Optional[str] = None,
+        icon_path: Optional[str] = None,
+        banner_path: Optional[str] = None,
+        corrected_title_id: Optional[str] = None,
+        suppress_missing: bool = False,
+        enabled: bool = True,
+        created_at: Optional[datetime.datetime] = None,
+        updated_at: Optional[datetime.datetime] = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(**kwargs)
+        self.app = app
+        if name is not None:
+            self.name = name
+        if release_date is not None:
+            self.release_date = release_date
+        if region is not None:
+            self.region = region
+        if description is not None:
+            self.description = description
+        if content_type is not None:
+            self.content_type = content_type
+        if icon_path is not None:
+            self.icon_path = icon_path
+        if banner_path is not None:
+            self.banner_path = banner_path
+        if corrected_title_id is not None:
+            self.corrected_title_id = corrected_title_id
+        self.suppress_missing = suppress_missing
+        self.enabled = enabled
+        if created_at is not None:
+            self.created_at = created_at
+        if updated_at is not None:
+            self.updated_at = updated_at
 
     def as_dict(self):
         return {
@@ -287,12 +387,11 @@ def get_all_files_without_identification(identification):
     results = Files.query.filter(Files.identification_type != identification).all()
     return[to_dict(r)['filepath']  for r in results]
 
-from sqlalchemy.orm import joinedload
 
 def get_all_apps(include_files: bool = False):
     q = Apps.query.options(db.joinedload(Apps.title))
     if include_files:
-        q = q.options(joinedload(Apps.files))
+        q = q.options(db.joinedload(Apps.files))
 
     apps_list = []
     for app in q.all():
@@ -374,6 +473,9 @@ def get_library_file_paths(library_id):
 
 def set_library_scan_time(library_id, scan_time=None):
     library = get_library(library_id)
+    if not library:
+        logger.warning(f"Cannot update last_scan; library id {library_id} not found.")
+        return
     library.last_scan = scan_time or datetime.datetime.utcnow()
     db.session.commit()
 
@@ -391,12 +493,13 @@ def add_title_id_in_db(title_id):
     existing_title = Titles.query.filter_by(title_id=title_id).first()
     
     if not existing_title:
-        new_title = Titles(title_id=title_id)
+        new_title = Titles()
+        new_title.title_id = title_id
         db.session.add(new_title)
         db.session.commit()
 
 def get_all_title_apps(title_id):
-    title = Titles.query.options(joinedload(Titles.apps)).filter_by(title_id=title_id).first()
+    title = Titles.query.options(db.joinedload(Titles.apps)).filter_by(title_id=title_id).first()
     return [] if title is None else [to_dict(a)  for a in title.apps]
 
 def get_app_by_id_and_version(app_id, app_version):

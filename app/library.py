@@ -4,7 +4,7 @@ import os
 import shutil
 import unicodedata
 from collections import defaultdict
-from typing import Dict, Optional
+from typing import Dict, Optional, Sequence, Union
 
 from sqlalchemy import or_
 
@@ -40,7 +40,7 @@ def organize_file(file_obj, library_path, organizer_settings, watcher):
         format_data = {}
         # Get title name from the associated title_id
         title_info = titles_lib.get_game_info(app.title.title_id)
-        if title_info['name'] == 'Unrecognized':
+        if not title_info or title_info.get('name') == 'Unrecognized':
             logger.warning(f"No title info associated with file {file_obj.filename}. Skipping organization.")
             return
         format_data["extension"] = file_obj.extension
@@ -52,7 +52,7 @@ def organize_file(file_obj, library_path, organizer_settings, watcher):
             format_data["patchLevel"] = titles_lib.get_update_number(app.app_version)
 
             game_info = titles_lib.get_game_info(app.app_id)
-            if app.app_type == APP_TYPE_DLC:
+            if app.app_type == APP_TYPE_DLC and game_info and game_info.get('name'):
                 format_data["appName"] = game_info['name']
             else:
                 format_data["appName"] = title_info['name']
@@ -204,7 +204,7 @@ def init_libraries(app, watcher, paths):
                 # Ensure watchdog is monitoring existing library
                 watcher.add_directory(path)
 
-def add_files_to_library(library, files):
+def add_files_to_library(library: Union[int, str], files: Sequence[str]) -> None:
     """
     Upsert files into the Files table.
     - Always inserts a row even when file_info is None.
@@ -214,15 +214,26 @@ def add_files_to_library(library, files):
     """
     nb_to_identify = len(files)
 
-    # Resolve library_id/path
-    if isinstance(library, int) or (isinstance(library, str) and library.isdigit()):
+    # Resolve library_id/path with explicit type narrowing for tooling
+    library_id: Optional[int]
+    library_path: Optional[str]
+    if isinstance(library, int):
+        library_id = library
+        library_path = get_library_path(library_id)
+    elif isinstance(library, str) and library.isdigit():
         library_id = int(library)
         library_path = get_library_path(library_id)
     else:
-        library_path = library
+        library_path = str(library)
         library_id = get_library_id(library_path)
 
-    library_path = get_library_path(library_id)
+    if library_id is None:
+        raise ValueError(f"Library {library!r} is not registered.")
+    if library_path is None:
+        library_path = get_library_path(library_id)
+        if library_path is None:
+            raise ValueError(f"Failed to resolve path for library id {library_id}.")
+
     for n, filepath in enumerate(files):
         file_rel = filepath.replace(library_path, "")
         logger.info(f'Getting file info ({n+1}/{nb_to_identify}): {file_rel}')
@@ -305,6 +316,8 @@ def add_files_to_library(library, files):
 
 def scan_library_path(library_path):
     library_id = get_library_id(library_path)
+    if library_id is None:
+        raise ValueError(f"Library path {library_path!r} is not registered.")
     logger.info(f'Scanning library path {library_path} ...')
     if not os.path.isdir(library_path):
         logger.warning(f'Library path {library_path} does not exists.')
@@ -1103,14 +1116,12 @@ def _generate_library_snapshot():
                 family_info = titles_lib.get_game_info(title['title_id'])  # family/base lookup
                 if family_info:
                     # Use the family's artwork when this DLC lacks its own assets so cards don’t show the gray placeholder.
-                    if not (title.get("bannerUrl") or title.get("banner_path")):
-                        fallback_banner = family_info.get("bannerUrl")
-                        if fallback_banner:
-                            title["bannerUrl"] = fallback_banner
-                    if not (title.get("iconUrl") or title.get("icon_path")):
-                        fallback_icon = family_info.get("iconUrl")
-                        if fallback_icon:
-                            title["iconUrl"] = fallback_icon
+                    fallback_banner = family_info.get("bannerUrl")
+                    fallback_icon = family_info.get("iconUrl")
+                    if not (title.get("bannerUrl") or title.get("banner_path")) and fallback_banner:
+                        title["bannerUrl"] = fallback_banner
+                    if not (title.get("iconUrl") or title.get("icon_path")) and fallback_icon:
+                        title["iconUrl"] = fallback_icon
                 family_name = (family_info or {}).get('name') or title.get('name')
                 title['title_id_name'] = family_name or 'Unrecognized'
             else:

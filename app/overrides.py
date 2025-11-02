@@ -5,7 +5,6 @@ import threading
 import datetime
 from typing import Optional
 from flask import abort, Blueprint, request, jsonify, current_app
-from sqlalchemy.orm import joinedload
 from werkzeug.exceptions import BadRequest, Conflict, NotFound
 
 from auth import access_required
@@ -44,7 +43,7 @@ def list_overrides():
 @overrides_blueprint.get("/<int:oid>")
 @access_required('shop')
 def get_override(oid: int):
-    ov = AppOverrides.query.options(joinedload(AppOverrides.app)).get(oid)
+    ov = AppOverrides.query.options(db.joinedload(AppOverrides.app)).get(oid)
     if not ov:
         raise NotFound("Override not found.")
     return jsonify(_serialize_with_art_urls(ov))
@@ -352,7 +351,7 @@ def build_override_index(include_disabled: bool = False) -> dict:
           "count": <number of entries>
         }
     """
-    q = AppOverrides.query.options(joinedload(AppOverrides.app))
+    q = AppOverrides.query.options(db.joinedload(AppOverrides.app))
     if not include_disabled:
         q = q.filter(AppOverrides.enabled.is_(True))
 
