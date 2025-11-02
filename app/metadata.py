@@ -8,10 +8,7 @@ from typing import Any, Dict, Iterable, Optional, Tuple
 from flask import Blueprint, jsonify, request
 
 from auth import access_required
-from cache import (
-    compute_library_metadata_snapshot_hash,
-    is_library_metadata_snapshot_current,
-)
+from cache import compute_library_metadata_snapshot_hash, snapshot_has_required_shape
 from constants import (
     APP_TYPE_BASE,
     APP_TYPE_DLC,
@@ -55,19 +52,24 @@ def generate_library_metadata() -> Tuple[dict, str]:
     return data, etag_hash
 
 
-def load_or_generate_library_metadata_snapshot() -> dict:
+def load_or_generate_library_metadata_snapshot(force_regenerate: bool = False) -> dict:
     saved = load_json(LIBRARY_METADATA_CACHE_FILE, default=None)
-    if saved and is_library_metadata_snapshot_current(saved):
+    if not force_regenerate and snapshot_has_required_shape(
+        saved,
+        expected_version=LIBRARY_METADATA_SNAPSHOT_VERSION,
+        payload_key="payload",
+        payload_type=dict,
+    ):
         return saved
-    return _generate_library_metadata_snapshot()
+    return _generate_library_metadata_snapshot(force_regenerate=force_regenerate)
 
 
-def _generate_library_metadata_snapshot() -> dict:
+def _generate_library_metadata_snapshot(*, force_regenerate: bool = False) -> dict:
     logger.info("Generating library metadata snapshot...")
     from library import load_or_generate_library_snapshot  # Local import to avoid circular dependency
 
     with titles_lib.titledb_session("generate_library_metadata"):
-        library_snapshot = load_or_generate_library_snapshot()
+        library_snapshot = load_or_generate_library_snapshot(force_regenerate=force_regenerate)
         games = library_snapshot.get("library") or []
 
         overrides_by_app = _build_overrides_by_app()

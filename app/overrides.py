@@ -17,8 +17,8 @@ from constants import *
 from cache import (
     compute_overrides_snapshot_hash,
     regenerate_cache,
-    is_overrides_snapshot_current,
     is_shop_snapshot_current,
+    snapshot_has_required_shape,
 )
 import logging
 logger = logging.getLogger('main')
@@ -258,12 +258,17 @@ def generate_overrides():
     snap = load_or_generate_overrides_snapshot()
     return snap["payload"], snap["hash"]
 
-def load_or_generate_overrides_snapshot():
+def load_or_generate_overrides_snapshot(force_regenerate: bool = False):
     """
     Load from disk if hash unchanged, otherwise regenerate + save.
     """
     saved = load_json(OVERRIDES_CACHE_FILE)
-    if saved and is_overrides_snapshot_current(saved):
+    if not force_regenerate and snapshot_has_required_shape(
+        saved,
+        expected_version=OVERRIDES_SNAPSHOT_VERSION,
+        payload_key="payload",
+        payload_type=dict,
+    ):
         return saved
 
     # Cache missing or stale → regenerate

@@ -1,9 +1,11 @@
+import datetime
 from constants import *
 from db import *
 from overrides import (
     build_override_index,
     load_or_generate_overrides_snapshot
 )
+from cache import snapshot_has_required_shape
 import titles as titles_lib
 from utils import load_json, save_json
 from Crypto.PublicKey import RSA
@@ -40,10 +42,14 @@ def generate_shop():
     snap = load_or_generate_shop_snapshot()
     return snap["payload"], snap["hash"]
 
-def load_or_generate_shop_snapshot():
+def load_or_generate_shop_snapshot(force_regenerate: bool = False):
     saved = load_json(SHOP_CACHE_FILE)
-    current_hash = _current_shop_hash()
-    if saved and saved.get("hash") == current_hash:
+    if not force_regenerate and snapshot_has_required_shape(
+        saved,
+        expected_version=SHOP_SNAPSHOT_VERSION,
+        payload_key="payload",
+        payload_type=dict,
+    ):
         return saved
     return _generate_shop_snapshot()
 
@@ -83,8 +89,12 @@ def _generate_shop_snapshot():
             "titledb": titledb_map,
         }
 
-        
-        snap = {"hash": _current_shop_hash(), "payload": payload}
+        snap = {
+            "hash": _current_shop_hash(),
+            "snapshot_version": SHOP_SNAPSHOT_VERSION,
+            "generated_at": datetime.datetime.utcnow().isoformat(timespec="seconds"),
+            "payload": payload,
+        }
         save_json(snap, SHOP_CACHE_FILE)
         logger.info("Generating shop snapshot done.")
         return snap

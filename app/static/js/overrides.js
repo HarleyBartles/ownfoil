@@ -607,16 +607,16 @@
       }
     }
 
-    let versionDisplayText = 'Not Owned';
+    let versionDisplayText = 'None';
     let versionHelpText = '';
     if (ownedVersion !== null) {
       versionDisplayText = `v${ownedVersion}`;
       if (availableVersion !== null && ownedVersion < availableVersion) {
-        versionHelpText = `Latest available: v${availableVersion}`;
+        versionHelpText = `Latest: v${availableVersion}`;
       }
     } else {
       if (availableVersion !== null) {
-        versionHelpText = `Latest available: v${availableVersion}`;
+        versionHelpText = `Latest: v${availableVersion}`;
       }
     }
 

@@ -19,6 +19,7 @@ LIBRARY_METADATA_SNAPSHOT_VERSION = 1
 OVERRIDES_CACHE_FILE = os.path.join(CACHE_DIR, 'overrides.json')
 OVERRIDES_SNAPSHOT_VERSION = 1
 SHOP_CACHE_FILE = os.path.join(CACHE_DIR, 'shop.json')
+SHOP_SNAPSHOT_VERSION = 1
 CACHE_MAX_AGE_SECONDS = 24 * 60 * 60  # 24 hours
 ALEMBIC_DIR = os.path.join(APP_DIR, 'migrations')
 ALEMBIC_CONF = os.path.join(ALEMBIC_DIR, 'alembic.ini')

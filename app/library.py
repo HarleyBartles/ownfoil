@@ -8,10 +8,7 @@ from typing import Dict, Optional
 
 from sqlalchemy import or_
 
-from cache import (
-    compute_library_apps_hash,
-    is_library_snapshot_current,
-)
+from cache import compute_library_apps_hash, snapshot_has_required_shape
 from constants import *
 from db import *
 from settings import load_settings
@@ -1033,16 +1030,21 @@ def generate_library_snapshot():
     etag = hashlib.sha256(etag_source).hexdigest()
     return library, etag
 
-def load_or_generate_library_snapshot():
+def load_or_generate_library_snapshot(force_regenerate: bool = False):
     """
     Load the BASE library (no overrides) from disk if hash unchanged.
     Otherwise, regenerate and save.
     """
     saved = load_json(LIBRARY_CACHE_FILE)
-    if saved and is_library_snapshot_current(saved):
+    if not force_regenerate and snapshot_has_required_shape(
+        saved,
+        expected_version=LIBRARY_SNAPSHOT_VERSION,
+        payload_key="library",
+        payload_type=list,
+    ):
         return saved
 
-    # Hash changed or cache missing/corrupt -> regenerate
+    # Cache missing or unusable → regenerate
     return _generate_library_snapshot()
 
 def _generate_library_snapshot():

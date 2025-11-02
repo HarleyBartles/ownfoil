@@ -60,6 +60,33 @@ def _snapshot_current(
     return True
 
 
+def snapshot_has_required_shape(
+    saved: Optional[dict],
+    *,
+    expected_version: int,
+    payload_key: str,
+    payload_type: type,
+) -> bool:
+    """
+    Lightweight structural validation for snapshot files that callers want to
+    reuse without fully recomputing hashes.
+    """
+    if not isinstance(saved, dict):
+        return False
+    if saved.get("snapshot_version") != expected_version:
+        return False
+    stamp = saved.get("generated_at")
+    if not isinstance(stamp, str) or not stamp.strip():
+        return False
+    hashed = saved.get("hash")
+    if not isinstance(hashed, str) or not hashed.strip():
+        return False
+    payload = saved.get(payload_key)
+    if not isinstance(payload, payload_type):
+        return False
+    return True
+
+
 def is_library_snapshot_current(saved_library: Optional[dict]) -> bool:
     def _extra(saved: dict) -> bool:
         current_tdb = titles_lib.get_titledb_commit_hash() or ""
@@ -267,22 +294,22 @@ def generate_snapshot(path: str):
         if path == LIBRARY_CACHE_FILE:
             from library import load_or_generate_library_snapshot
 
-            load_or_generate_library_snapshot()
+            load_or_generate_library_snapshot(force_regenerate=True)
             logger.info(f"Regenerated library snapshot: {path}")
         elif path == LIBRARY_METADATA_CACHE_FILE:
             from metadata import load_or_generate_library_metadata_snapshot
 
-            load_or_generate_library_metadata_snapshot()
+            load_or_generate_library_metadata_snapshot(force_regenerate=True)
             logger.info(f"Regenerated library metadata snapshot: {path}")
         elif path == OVERRIDES_CACHE_FILE:
             from overrides import load_or_generate_overrides_snapshot
 
-            load_or_generate_overrides_snapshot()
+            load_or_generate_overrides_snapshot(force_regenerate=True)
             logger.info(f"Regenerated overrides snapshot: {path}")
         elif path == SHOP_CACHE_FILE:
             from shop import load_or_generate_shop_snapshot
 
-            load_or_generate_shop_snapshot()
+            load_or_generate_shop_snapshot(force_regenerate=True)
             logger.info(f"Regenerated shop snapshot: {path}")
         else:
             logger.warning(f"Unknown snapshot path: {path}")
