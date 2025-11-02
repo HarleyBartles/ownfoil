@@ -87,13 +87,31 @@ def _build_overrides_by_app() -> Dict[str, dict]:
     idx = build_override_index(include_disabled=False) or {}
     raw = idx.get("by_app") if isinstance(idx, dict) else {}
     overrides_by_app: Dict[str, dict] = {}
+    projection_cache: Dict[str, dict] = {}
     if isinstance(raw, dict):
         for raw_app_id, payload in raw.items():
             if not isinstance(payload, dict):
                 continue
             normalized_app_id = _normalized_id(raw_app_id, "app")
-            if normalized_app_id:
-                overrides_by_app[normalized_app_id] = payload
+            if not normalized_app_id:
+                continue
+
+            entry: dict = dict(payload)
+
+            corrected = _normalized_id(entry.get("corrected_title_id"), "title")
+            if corrected:
+                projection = projection_cache.get(corrected)
+                if projection is None:
+                    info = titles_lib.get_game_info(corrected) or {}
+                    projection = {
+                        "name": (info.get("name") or "").strip() or None,
+                    }
+                    projection_cache[corrected] = projection
+                projection_name = _first_nonempty(projection.get("name"))
+                if projection_name:
+                    entry["projection_name"] = projection_name
+
+            overrides_by_app[normalized_app_id] = entry
     return overrides_by_app
 
 
@@ -111,10 +129,15 @@ def _collect_base_maps(
 
         app_id_norm = _normalized_id(game.get("app_id"), "app")
         override = overrides_by_app.get(app_id_norm)
-        override_name = _first_nonempty(override.get("name")) if override else None
+        override_display_name = None
+        if override:
+            override_display_name = _first_nonempty(
+                override.get("name"),
+                override.get("projection_name"),
+            )
 
         display_name = _first_nonempty(
-            override_name,
+            override_display_name,
             game.get("title_id_name"),
             game.get("name"),
         ) or "Unrecognized"
@@ -146,7 +169,12 @@ def _display_title_for_game(
     app_type = (game.get("app_type") or "").upper()
     app_id_norm = _normalized_id(game.get("app_id"), "app")
     title_id_norm = _normalized_id(game.get("title_id"), "title")
-    override_name = _first_nonempty(override.get("name")) if override else None
+    override_display_name = None
+    if override:
+        override_display_name = _first_nonempty(
+            override.get("name"),
+            override.get("projection_name"),
+        )
 
     if app_type == APP_TYPE_DLC:
         base_sort_name = base_sort_name_by_id.get(title_id_norm)
@@ -164,12 +192,12 @@ def _display_title_for_game(
         return _first_nonempty(
             base_sort_name,
             game.get("title_id_name"),
-            override_name,
+            override_display_name,
             game.get("name"),
         ) or "Unrecognized"
 
     return _first_nonempty(
-        override_name,
+        override_display_name,
         game.get("title_id_name"),
         game.get("name"),
     ) or "Unrecognized"
@@ -184,7 +212,12 @@ def _build_metadata_record(
     app_type = (game.get("app_type") or "").upper()
     app_id_norm = _normalized_id(game.get("app_id"), "app")
     title_id_norm = _normalized_id(game.get("title_id"), "title")
-    override_name = _first_nonempty(override.get("name")) if override else None
+    override_display_name = None
+    if override:
+        override_display_name = _first_nonempty(
+            override.get("name"),
+            override.get("projection_name"),
+        )
 
     if app_type == APP_TYPE_DLC:
         base_sort_name = base_sort_name_by_id.get(title_id_norm)
@@ -200,7 +233,7 @@ def _build_metadata_record(
         sort_name = _first_nonempty(
             base_sort_name,
             game.get("title_id_name"),
-            override_name,
+            override_display_name,
             game.get("name"),
         ) or "Unrecognized"
         base_key = title_id_norm or app_id_norm
@@ -208,7 +241,7 @@ def _build_metadata_record(
     elif app_type == APP_TYPE_BASE:
         sort_name = base_sort_name_by_id.get(title_id_norm) or (
             _first_nonempty(
-                override_name,
+                override_display_name,
                 game.get("title_id_name"),
                 game.get("name"),
             ) or "Unrecognized"
@@ -217,7 +250,7 @@ def _build_metadata_record(
         sort_kind = 0
     else:
         sort_name = _first_nonempty(
-            override_name,
+            override_display_name,
             game.get("title_id_name"),
             game.get("name"),
         ) or "Unrecognized"
