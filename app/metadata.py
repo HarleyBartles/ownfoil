@@ -29,6 +29,74 @@ MetadataRecord = Dict[str, Any]
 TOKEN_RE = re.compile(r"[a-z0-9]+")
 COMBINING_MARKS_RE = re.compile(r"[\u0300-\u036f]")
 
+@metadata_blueprint.route("/library", methods=["GET"])
+@access_required("shop")
+def get_library_metadata():
+    payload, etag_hash = generate_library_metadata()
+    resp = jsonify(payload)
+    resp.set_etag(etag_hash)
+    resp.headers["Vary"] = "Authorization"
+    resp.headers["Cache-Control"] = "no-cache, private"
+    return resp.make_conditional(request)
+
+
+def generate_library_metadata() -> Tuple[dict, str]:
+    snapshot = load_or_generate_library_metadata_snapshot()
+    payload = snapshot.get("payload") or {}
+    entries = payload.get("entries") or {}
+    base_lookup = payload.get("base_display_by_prefix") or {}
+
+    data = {
+        "entries": entries,
+        "base_display_by_prefix": base_lookup,
+    }
+
+    etag_hash = snapshot.get("hash") or hashlib.sha256(b":metadata:").hexdigest()
+    return data, etag_hash
+
+
+def load_or_generate_library_metadata_snapshot() -> dict:
+    saved = load_json(LIBRARY_METADATA_CACHE_FILE, default=None)
+    if saved and is_library_metadata_snapshot_current(saved):
+        return saved
+    return _generate_library_metadata_snapshot()
+
+
+def _generate_library_metadata_snapshot() -> dict:
+    logger.info("Generating library metadata snapshot...")
+    from library import load_or_generate_library_snapshot  # Local import to avoid circular dependency
+
+    with titles_lib.titledb_session("generate_library_metadata"):
+        library_snapshot = load_or_generate_library_snapshot()
+        games = library_snapshot.get("library") or []
+
+        overrides_by_app = _build_overrides_by_app()
+        base_sort_name_by_id, base_display_by_prefix = _collect_base_maps(games, overrides_by_app)
+
+        metadata_entries: Dict[str, MetadataRecord] = {}
+        for game in games:
+            app_id_norm = _normalized_id(game.get("app_id"), "app")
+            if not app_id_norm:
+                continue
+            override = overrides_by_app.get(app_id_norm)
+            record = _build_metadata_record(game, override, base_sort_name_by_id, base_display_by_prefix)
+            record["search"] = _build_search_blob(game, override, record["display_title"])
+            metadata_entries[app_id_norm] = record
+
+        snapshot = {
+            "hash": compute_library_metadata_snapshot_hash(),
+            "snapshot_version": LIBRARY_METADATA_SNAPSHOT_VERSION,
+            "generated_at": datetime.datetime.utcnow().isoformat(timespec="seconds"),
+            "payload": {
+                "entries": metadata_entries,
+                "base_display_by_prefix": base_display_by_prefix,
+            },
+        }
+
+        save_json(snapshot, LIBRARY_METADATA_CACHE_FILE)
+        logger.info("Generating library metadata snapshot done.")
+        return snapshot
+
 
 def _first_nonempty(*values: Optional[str]) -> Optional[str]:
     for val in values:
@@ -337,72 +405,3 @@ def _build_search_blob(game: dict, override: Optional[dict], display_title: str)
     add_text(display_title)
 
     return " ".join(parts)
-
-
-def _generate_library_metadata_snapshot() -> dict:
-    logger.info("Generating library metadata snapshot...")
-    from library import load_or_generate_library_snapshot  # Local import to avoid circular dependency
-
-    with titles_lib.titledb_session("generate_library_metadata"):
-        library_snapshot = load_or_generate_library_snapshot()
-        games = library_snapshot.get("library") or []
-
-        overrides_by_app = _build_overrides_by_app()
-        base_sort_name_by_id, base_display_by_prefix = _collect_base_maps(games, overrides_by_app)
-
-        metadata_entries: Dict[str, MetadataRecord] = {}
-        for game in games:
-            app_id_norm = _normalized_id(game.get("app_id"), "app")
-            if not app_id_norm:
-                continue
-            override = overrides_by_app.get(app_id_norm)
-            record = _build_metadata_record(game, override, base_sort_name_by_id, base_display_by_prefix)
-            record["search"] = _build_search_blob(game, override, record["display_title"])
-            metadata_entries[app_id_norm] = record
-
-        snapshot = {
-            "hash": compute_library_metadata_snapshot_hash(),
-            "snapshot_version": LIBRARY_METADATA_SNAPSHOT_VERSION,
-            "generated_at": datetime.datetime.utcnow().isoformat(timespec="seconds"),
-            "payload": {
-                "entries": metadata_entries,
-                "base_display_by_prefix": base_display_by_prefix,
-            },
-        }
-
-        save_json(snapshot, LIBRARY_METADATA_CACHE_FILE)
-        logger.info("Generating library metadata snapshot done.")
-        return snapshot
-
-
-def load_or_generate_library_metadata_snapshot() -> dict:
-    saved = load_json(LIBRARY_METADATA_CACHE_FILE, default=None)
-    if saved and is_library_metadata_snapshot_current(saved):
-        return saved
-    return _generate_library_metadata_snapshot()
-
-
-def generate_library_metadata() -> Tuple[dict, str]:
-    snapshot = load_or_generate_library_metadata_snapshot()
-    payload = snapshot.get("payload") or {}
-    entries = payload.get("entries") or {}
-    base_lookup = payload.get("base_display_by_prefix") or {}
-
-    data = {
-        "entries": entries,
-        "base_display_by_prefix": base_lookup,
-    }
-
-    etag_hash = snapshot.get("hash") or hashlib.sha256(b":metadata:").hexdigest()
-    return data, etag_hash
-
-
-@metadata_blueprint.route("/library", methods=["GET"])
-@access_required("shop")
-def get_library_metadata():
-    payload, etag_hash = generate_library_metadata()
-    resp = jsonify(payload)
-    resp.set_etag(etag_hash)
-    resp.headers["Vary"] = "Authorization"
-    resp.headers["Cache-Control"] = "no-cache, private"
-    return resp.make_conditional(request)
