@@ -344,6 +344,14 @@
                     <div id="encryptShopCheckHelp" class="form-text">Serve encrypted and compressed shop, so that only Tinfoil clients
                         can access the content. <strong>Strongly suggested to enable it for security</strong>.</div>
                 </div>
+                <div class="mb-3 form-check">
+                    <input type="checkbox" class="form-check-input" id="displayGhostCardsCheck"
+                        aria-describedby="displayGhostCardsCheckHelp">
+                    <label class="form-check-label" for="displayGhostCardsCheck">Display ghost cards to all users</label>
+                    <div id="displayGhostCardsCheckHelp" class="form-text">
+                        When enabled, suppressed (ghost) DLC cards remain visible to non-admin shop users.
+                    </div>
+                </div>
 
                 <div class="mb-3">
                     <label for="motdTextArea" class="form-label">Message of the day:</label>
@@ -896,12 +904,14 @@
         const host = $('#shopHostInput').val();
         const isPublic = getCheckboxStatus("publicShopCheck");
         const encrypt = getCheckboxStatus("encryptShopCheck");
+        const displayGhostCards = getCheckboxStatus("displayGhostCardsCheck");
         const motd = $('#motdTextArea').val();
         const placeholder = ($('#placeholderTextInput').val() || "").trim();
         const data = {
             host: host,
             public: isPublic,
             encrypt: encrypt,
+            display_ghost_cards: displayGhostCards,
             motd: motd,
             placeholder_text: placeholder
         };
@@ -1047,6 +1057,7 @@
             setInputVal("placeholderTextInput", shopSettings['placeholder_text'] || "Image Unavailable");
             $("#publicShopCheck").prop("checked", shopSettings['public']);
             $("#encryptShopCheck").prop("checked", shopSettings['encrypt']);
+            $("#displayGhostCardsCheck").prop("checked", shopSettings['display_ghost_cards']);
             if (!shopSettings['host']) {
                 $("#missingShopHostAlert").css('display', '');
             } else if (!shopSettings['hauth']) {

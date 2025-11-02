@@ -311,7 +311,8 @@ def access_shop():
         title='Library',
         admin_account_created=admin_account_created(),
         valid_keys=app_settings['titles']['valid_keys'],
-        placeholder_text=app_settings['shop']['placeholder_text']
+        placeholder_text=app_settings['shop']['placeholder_text'],
+        display_ghost_cards=app_settings['shop'].get('display_ghost_cards', False)
     )
 
 @access_required('shop')

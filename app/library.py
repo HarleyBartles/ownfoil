@@ -868,6 +868,31 @@ def remove_outdated_update_files(watcher):
                     else:
                         logger.warning(f"Physical file not found for deletion: {file_obj.filepath}")
 
+        def _normalized_id(value, kind: str) -> str:
+            if not isinstance(value, str):
+                return ""
+            trimmed = value.strip()
+            if not trimmed:
+                return ""
+            try:
+                normalized = normalize_id(trimmed, kind)
+            except Exception:
+                normalized = None
+            if normalized:
+                return normalized.upper()
+            return trimmed.upper()
+
+        override_index = build_override_index(include_disabled=False) or {}
+        raw_overrides = override_index.get("by_app") if isinstance(override_index, dict) else {}
+        overrides_by_app: dict[str, dict] = {}
+        if isinstance(raw_overrides, dict):
+            for raw_app_id, payload in raw_overrides.items():
+                if not isinstance(payload, dict):
+                    continue
+                normalized_app_id = _normalized_id(raw_app_id, "app")
+                if normalized_app_id:
+                    overrides_by_app[normalized_app_id] = payload
+
         for title in titles:
             title_apps = get_all_title_apps(title.title_id)
 
@@ -1072,11 +1097,6 @@ def _generate_library_snapshot():
                 if normalized_app_id:
                     overrides_by_app[normalized_app_id] = payload
 
-        suppressed_app_ids = {
-            app_id for app_id, payload in overrides_by_app.items()
-            if isinstance(payload, dict) and payload.get("suppress_missing")
-        }
-
         for title in titles:
             has_none_value = any(value is None for value in title.values())
             if has_none_value:
@@ -1160,11 +1180,10 @@ def _generate_library_snapshot():
 
                 title['version'] = sorted(version_list, key=lambda x: x['version'])
 
-                # Recompute DLC completion locally so overrides take effect immediately
+                # Recompute DLC completion locally based on current library data
                 available_dlc_apps = [
                     app for app in title_apps
                     if app.get('app_type') == APP_TYPE_DLC
-                    and (app.get('app_id') or '').upper() not in suppressed_app_ids
                 ]
 
                 if not available_dlc_apps:
@@ -1193,8 +1212,6 @@ def _generate_library_snapshot():
                 # Get all versions for this DLC app_id
                 title_apps = get_all_title_apps(title['title_id'])
                 dlc_apps = [app for app in title_apps if app.get('app_type') == APP_TYPE_DLC and app['app_id'] == app_id]
-
-                title['suppressed_missing'] = (app_id or "").upper() in suppressed_app_ids
 
                 # Create version list for this DLC
                 version_list = []
