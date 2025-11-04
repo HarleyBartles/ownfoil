@@ -204,8 +204,8 @@
     let cardSize = 3; // Default card size
     let currentView = 'card'; // Default view is 'card'
     let paginationController = null;
-    let activeTooltips = [];
-    let activePopovers = [];
+    let activeTooltips = []; // DOM nodes whose tooltips we need to tear down
+    let activePopovers = []; // DOM nodes whose popovers we need to tear down
 
     // --- Search debounce ---
     const SEARCH_DEBOUNCE_MS = 300;
@@ -710,8 +710,39 @@
                 versionBadge.title = versionTitle;
                 versionBadge.innerHTML = `<i class='bi ${game.has_latest_version ? 'bi-check-circle-fill' : 'bi-arrow-down-circle'}'></i>`;
 
-                if (Array.isArray(game.version) && game.version.length) {
-                    const popoverContent = game.version.map(v => `${v.release_date}: v${v.version} ${v.owned ? 'Owned' : 'Missing'}`).join('<br>');
+                const rawVersions = Array.isArray(game.version)
+                    ? game.version.filter(entry => entry && typeof entry === 'object')
+                    : [];
+                const baseReleaseDate = (() => {
+                    const candidate = typeof game.release_date === 'string' ? game.release_date.trim() : '';
+                    if (candidate && candidate.toLowerCase() !== 'unknown') return candidate;
+                    const orig = game._orig?.release_date;
+                    return typeof orig === 'string' ? orig : '';
+                })();
+
+                const normalizedVersions = rawVersions.map((entry) => {
+                    const versionNumber = Number.isFinite(Number(entry.version)) ? Number(entry.version) : entry.version;
+                    const isBaseVersion = Number(versionNumber) === 0;
+                    const rawDate = typeof entry.release_date === 'string' ? entry.release_date.trim() : '';
+                    let displayDate = rawDate;
+                    if ((!displayDate || displayDate.toLowerCase() === 'unknown') && isBaseVersion && baseReleaseDate) {
+                        displayDate = baseReleaseDate;
+                    }
+                    if (!displayDate) {
+                        displayDate = isBaseVersion ? 'Base release' : 'Unknown';
+                    }
+                    return {
+                        versionNumber,
+                        owned: entry.owned === true,
+                        displayDate,
+                        isBaseVersion,
+                    };
+                });
+
+                if (normalizedVersions.length) {
+                    const popoverContent = normalizedVersions
+                        .map(entry => `${entry.displayDate}: v${entry.versionNumber} ${entry.owned ? 'Owned' : 'Missing'}`)
+                        .join('<br>');
                     versionBadge.setAttribute('data-bs-toggle', 'popover');
                     versionBadge.setAttribute('data-bs-placement', 'top');
                     versionBadge.setAttribute('data-bs-trigger', 'click');
@@ -724,7 +755,7 @@
                     versionBadge.setAttribute('data-bs-toggle', 'tooltip');
                     versionBadge.setAttribute('data-bs-placement', 'top');
                     if (Array.isArray(game.version)) {
-                        versionBadge.setAttribute('data-bs-title', game.version.length ? `Version v${game.version}` : 'Version v0');
+                        versionBadge.setAttribute('data-bs-title', 'Version info unavailable');
                     } else if (typeof game.version !== 'undefined') {
                         versionBadge.setAttribute('data-bs-title', `Version v${game.version}`);
                     }
@@ -815,15 +846,31 @@
 
     // Tear down Bootstrap tooltips/popovers before reinitializing after a render.
     function disposeInteractiveHints() {
-        const dispose = (instances) => {
-            instances.forEach((instance) => {
-                if (instance && typeof instance.dispose === 'function') {
+        const bootstrap = window.bootstrap;
+        if (!bootstrap) {
+            activeTooltips = [];
+            activePopovers = [];
+            return;
+        }
+
+        const disposeFor = (elements, ctor) => {
+            if (!Array.isArray(elements) || !ctor || typeof ctor !== 'function') return;
+            const getInstance = typeof ctor.getInstance === 'function' ? ctor.getInstance.bind(ctor) : null;
+
+            elements.forEach((el) => {
+                if (!el) return;
+                const instance = getInstance ? getInstance(el) : null;
+                if (!instance || typeof instance.dispose !== 'function') return;
+                try {
                     instance.dispose();
+                } catch (err) {
+                    // Ignore: Bootstrap may already have disposed the instance internally.
                 }
             });
         };
-        dispose(activeTooltips);
-        dispose(activePopovers);
+
+        disposeFor(activeTooltips, bootstrap.Tooltip);
+        disposeFor(activePopovers, bootstrap.Popover);
         activeTooltips = [];
         activePopovers = [];
     }
@@ -837,7 +884,7 @@
             const tooltipEls = document.querySelectorAll('[data-bs-toggle="tooltip"]');
             tooltipEls.forEach((el) => {
                 const instance = tooltipCtor.getOrCreateInstance(el);
-                activeTooltips.push(instance);
+                if (instance) activeTooltips.push(el);
             });
         }
 
@@ -846,7 +893,7 @@
             const popoverEls = document.querySelectorAll('[data-bs-toggle="popover"]');
             popoverEls.forEach((el) => {
                 const instance = popoverCtor.getOrCreateInstance(el);
-                activePopovers.push(instance);
+                if (instance) activePopovers.push(el);
             });
         }
     }

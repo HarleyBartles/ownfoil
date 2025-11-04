@@ -145,9 +145,25 @@
     return '';
   };
 
-  const pickNameForEdit = (game, ovr) => (ovr && typeof ovr.name === 'string' && ovr.name.trim())
-    ? ovr.name.trim()
-    : (game?.name || game?.title_id_name || '').trim();
+  const getRedirectProjectionFor = (game) => {
+    if (!game) return null;
+    const redirect = getRedirectForApp(game.app_id);
+    const proj = redirect?.projection;
+    if (proj && typeof proj === 'object') return proj;
+    return null;
+  };
+
+  const pickNameForEdit = (game, ovr) => {
+    // Prefer explicit override name, then redirect projection, then raw names.
+    if (ovr && typeof ovr.name === 'string' && ovr.name.trim()) {
+      return ovr.name.trim();
+    }
+    const proj = getRedirectProjectionFor(game);
+    if (proj && typeof proj.name === 'string' && proj.name.trim()) {
+      return proj.name.trim();
+    }
+    return (game?.name || game?.title_id_name || '').trim();
+  };
 
   // ----------------- Overlay helpers -----------------
   // Apply (or remove) a single override onto matching games in memory.
@@ -585,20 +601,39 @@
     if (!window.IS_ADMIN) return;
     const k = appKey(game);
     const ovr = k ? overridesByKey.get(k) : null;
+    const projection = getRedirectProjectionFor(game);
 
     $('#ovr-id').val(ovr?.id || '');
     $('#ovr-app-id').val(game.app_id || '');
     $('#ovr-file-name').text(game.file_basename || '');
 
     // --- TitleDB baselines for the 4 fields ---
-    const tdReleaseDate = trimOrNull(game.release_date);
-    const tdRegion      = trimOrNull(game.region);
-    const tdDescription = trimOrNull(game.description);
+    const projectedReleaseDate = projection && typeof projection.release_date === 'string'
+      ? trimOrNull(projection.release_date)
+      : null;
+    const projectedRegion = projection && typeof projection.region === 'string'
+      ? trimOrNull(projection.region)
+      : null;
+    const projectedDescription = projection && typeof projection.description === 'string'
+      ? trimOrNull(projection.description)
+      : null;
+    const projectedName = projection && typeof projection.name === 'string'
+      ? trimOrNull(projection.name)
+      : null;
+
+    const tdReleaseDate = projectedReleaseDate ?? trimOrNull(game.release_date);
+    const tdRegion      = projectedRegion ?? trimOrNull(game.region);
+    const tdDescription = projectedDescription ?? trimOrNull(game.description);
 
     // Name
-    $('#ovr-name').val(pickNameForEdit(game, ovr));
+    const initialName = pickNameForEdit(game, ovr) || '';
+    const baselineName = projectedName
+      ?? trimOrNull(game.title_id_name)
+      ?? trimOrNull(game.name)
+      ?? '';
+    $('#ovr-name').val(initialName);
     $('#ovr-name')
-      .data('origName', ovr?.name ?? (game.title_id_name || game.name || ''))
+      .data('origName', ovr?.name ?? (baselineName ?? ''))
       .data('everEdited', false);
 
     // Region
