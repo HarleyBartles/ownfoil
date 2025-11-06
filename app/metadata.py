@@ -8,7 +8,11 @@ from typing import Any, Dict, Iterable, Optional, Tuple
 from flask import Blueprint, jsonify, request
 
 from auth import access_required
-from cache import compute_library_metadata_snapshot_hash, snapshot_has_required_shape
+from cache import (
+    build_snapshot_etag,
+    compute_library_metadata_snapshot_hash,
+    snapshot_has_required_shape,
+)
 from constants import (
     APP_TYPE_BASE,
     APP_TYPE_DLC,
@@ -48,7 +52,7 @@ def generate_library_metadata() -> Tuple[dict, str]:
         "base_display_by_prefix": base_lookup,
     }
 
-    etag_hash = snapshot.get("hash") or hashlib.sha256(b":metadata:").hexdigest()
+    etag_hash = build_snapshot_etag(snapshot)
     return data, etag_hash
 
 

@@ -4,7 +4,9 @@ from flask import (
     request,
     jsonify,
     send_from_directory,
-    Response
+    Response,
+    redirect,
+    url_for,
 )
 from scheduler import init_scheduler
 from functools import wraps
@@ -27,6 +29,8 @@ from metadata import metadata_blueprint
 from cache import regenerate_all_caches
 import titledb
 import os
+from urllib.parse import quote_plus
+from typing import Union
 
 def init():
     global watcher
@@ -307,22 +311,68 @@ def tinfoil_access(f):
         return f(*args, **kwargs)
     return _tinfoil_access
 
-def access_shop():
-    # Ensure we render with the latest on-disk configuration (e.g., shop display toggles)
-    reload_conf()
-    shop_conf = app_settings.get('shop', {})
+def _resolve_placeholder_assets(shop_conf: dict[str, object]) -> tuple[str, str, str]:
+    fallback_placeholder = 'Image Unavailable'
+    raw_placeholder = shop_conf.get('placeholder_text')
+    if isinstance(raw_placeholder, str):
+        candidate = raw_placeholder.strip()
+        placeholder: str = candidate or fallback_placeholder
+    else:
+        placeholder = fallback_placeholder
+
+    encoded = quote_plus(placeholder)
+
+    raw_banner = shop_conf.get('default_banner_url')
+    if isinstance(raw_banner, str):
+        banner_candidate = raw_banner.strip()
+        default_banner: str = banner_candidate or f"https://placehold.co/400x225/png?text={encoded}"
+    else:
+        default_banner = f"https://placehold.co/400x225/png?text={encoded}"
+
+    raw_icon = shop_conf.get('default_icon_url')
+    if isinstance(raw_icon, str):
+        icon_candidate = raw_icon.strip()
+        default_icon: str = icon_candidate or f"https://placehold.co/400x400/png?text={encoded}"
+    else:
+        default_icon = f"https://placehold.co/400x400/png?text={encoded}"
+
+    return placeholder, default_banner, default_icon
+
+
+def _render_library_template(shop_conf: dict[str, object]) -> str:
+    placeholder_text, default_banner_url, default_icon_url = _resolve_placeholder_assets(shop_conf)
     return render_template(
-        'index.html',
+        'library.html',
         title='Library',
         admin_account_created=admin_account_created(),
         valid_keys=app_settings['titles']['valid_keys'],
-        placeholder_text=shop_conf.get('placeholder_text', 'Image Unavailable'),
+        placeholder_text=placeholder_text,
+        default_banner_url=default_banner_url,
+        default_icon_url=default_icon_url,
         hide_ghost_cards=bool(shop_conf.get('hide_ghost_cards', True))
     )
 
-@access_required('shop')
-def access_shop_auth():
-    return access_shop()
+
+def render_library_page() -> str:
+    # Ensure we render with the latest on-disk configuration (e.g., shop display toggles)
+    reload_conf()
+    shop_conf = app_settings.get('shop', {})
+    return _render_library_template(shop_conf)
+
+
+@app.route('/library')
+def library() -> Union[Response, str]:
+    reload_conf()
+    shop_conf = app_settings.get('shop', {})
+    public_enabled = bool(shop_conf.get('public', False))
+    if not admin_account_created() or public_enabled:
+        return _render_library_template(shop_conf)
+
+    @access_required('shop')
+    def guarded_library() -> Union[Response, str]:
+        return _render_library_template(shop_conf)
+
+    return guarded_library()
 
 @app.route('/')
 def index():
@@ -370,13 +420,10 @@ def index():
         return _build_tinfoil_shop_response()
     
     if all(header in request.headers for header in TINFOIL_HEADERS):
-    # if True:
         logger.info(f"Tinfoil connection from {request.remote_addr}")
         return access_tinfoil_shop()
     
-    if not app_settings['shop']['public']:
-        return access_shop_auth()
-    return access_shop()
+    return redirect(url_for('library'))
 
 @app.route('/settings')
 @access_required('admin')

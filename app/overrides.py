@@ -14,6 +14,7 @@ from utils import *
 from images import *
 from constants import *
 from cache import (
+    build_snapshot_etag,
     compute_overrides_snapshot_hash,
     regenerate_cache,
     is_shop_snapshot_current,
@@ -255,7 +256,7 @@ def generate_overrides():
     Always returns the latest cached payload (regenerating when needed).
     """
     snap = load_or_generate_overrides_snapshot()
-    return snap["payload"], snap["hash"]
+    return snap["payload"], build_snapshot_etag(snap)
 
 def load_or_generate_overrides_snapshot(force_regenerate: bool = False):
     """

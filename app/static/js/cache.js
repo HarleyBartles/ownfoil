@@ -202,6 +202,68 @@
     removeFromLocalStorage(key);
   }
 
+  function writeLocalString(key, value) {
+    if (!key) return;
+    try {
+      if (value === undefined || value === null) {
+        localStorage.removeItem(key);
+        return;
+      }
+      localStorage.setItem(key, String(value));
+    } catch {
+      // Ignore storage errors (quota, private browsing, etc.)
+    }
+  }
+
+  function readLocalString(key, fallback = null) {
+    if (!key) return fallback;
+    try {
+      const raw = localStorage.getItem(key);
+      return raw === null ? fallback : raw;
+    } catch {
+      return fallback;
+    }
+  }
+
+  function writeLocalJson(key, value) {
+    if (!key) return;
+    try {
+      if (value === undefined) {
+        localStorage.removeItem(key);
+        return;
+      }
+      localStorage.setItem(key, JSON.stringify(value));
+    } catch {
+      // Ignore serialization/storage errors
+    }
+  }
+
+  function readLocalJson(key, fallback = null) {
+    if (!key) return fallback;
+    try {
+      const raw = localStorage.getItem(key);
+      if (raw === null) return fallback;
+      return JSON.parse(raw);
+    } catch {
+      return fallback;
+    }
+  }
+
+  function removeLocalKey(key) {
+    if (!key) return;
+    try {
+      localStorage.removeItem(key);
+    } catch {
+      // Ignore removal errors
+    }
+  }
+
+  cacheNs.writeLocalString = writeLocalString;
+  cacheNs.readLocalString = readLocalString;
+  cacheNs.writeLocalJson = writeLocalJson;
+  cacheNs.readLocalJson = readLocalJson;
+  cacheNs.removeLocal = removeLocalKey;
+
   cacheNs.loadSnapshotAsync = loadSnapshotAsync;
   cacheNs.persistSnapshotAsync = persistSnapshotAsync;
   cacheNs.touchSnapshotAsync = touchSnapshotAsync;

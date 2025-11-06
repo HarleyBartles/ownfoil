@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+
+{% block content %}
+{% set is_admin = current_user.is_authenticated and current_user.is_admin %}
+
+{% include 'nav.html' %}
+
+{% with
+  placeholder_text=placeholder_text,
+  default_banner_url=default_banner_url,
+  default_icon_url=default_icon_url,
+  hide_ghost_cards=hide_ghost_cards,
+  is_admin=is_admin
+%}
+  {% include 'library_content.html' %}
+{% endwith %}
+
+{% if is_admin %}
+  {% include 'override_modal.html' %}
+{% endif %}
+
+<script src="{{ url_for('static', filename='js/page-config.js') }}"></script>
+<script src="{{ url_for('static', filename='js/cache.js') }}"></script>
+<script src="{{ url_for('static', filename='js/overrides.js') }}"></script>
+<script src="{{ url_for('static', filename='js/library-data.js') }}"></script>
+<script src="{{ url_for('static', filename='js/pagination.js') }}"></script>
+<script src="{{ url_for('static', filename='js/library-page.js') }}"></script>
+{% endblock %}

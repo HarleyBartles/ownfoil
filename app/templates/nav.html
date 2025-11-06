@@ -1,6 +1,9 @@
 <nav class="navbar navbar-expand-lg bg-body-secondary bg-dark border-bottom border-body" data-bs-theme="dark">
+    {% set library_active = title == 'Library' %}
+    {% set settings_active = title == 'Settings' %}
+    {% set setup_active = title == 'Setup' %}
     <div class="container-fluid">
-        <a class="navbar-brand" href="#">Ownfoil</a>
+        <a class="navbar-brand" href="{{ url_for('library') }}">Ownfoil</a>
         <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav"
             aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
             <span class="navbar-toggler-icon"></span>
@@ -8,15 +11,21 @@
         <div class="collapse navbar-collapse" id="navbarNav">
             <ul class="navbar-nav">
                 <li class="nav-item">
-                    <a class="nav-link{% if title == 'Library' %} active" aria-current="page"{% else %}"{% endif %} href="/">Library</a>
+                    <a class="nav-link{% if library_active %} active{% endif %}"
+                       {% if library_active %}aria-current="page"{% endif %}
+                       href="{{ url_for('library') }}">Library</a>
                 </li>
                 {% if current_user.is_admin or admin_account_created == false %}
                 <li class="nav-item">
-                    <a class="nav-link{% if title == 'Settings' %} active" aria-current="page"{% else %}"{% endif %}" href="/settings">Settings</a>
+                    <a class="nav-link{% if settings_active %} active{% endif %}"
+                       {% if settings_active %}aria-current="page"{% endif %}
+                       href="{{ url_for('settings_page') }}">Settings</a>
                 </li>
                 {% endif %}
                 <li class="nav-item">
-                    <a class="nav-link{% if title == 'Setup' %} active" aria-current="page"{% else %}"{% endif %}" href="#">Setup</a>
+                    <a class="nav-link{% if setup_active %} active{% endif %}"
+                       {% if setup_active %}aria-current="page"{% endif %}
+                       href="#">Setup</a>
                 </li>
             </ul>
             {% if current_user.is_authenticated %}

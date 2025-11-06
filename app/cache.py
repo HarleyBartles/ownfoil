@@ -24,6 +24,29 @@ logger = logging.getLogger("main")
 CacheValidator = Callable[[Optional[dict]], bool]
 
 
+def build_snapshot_etag(snapshot: Optional[dict], *extra_parts: str) -> str:
+    """
+    Build an HTTP ETag string from a cached snapshot.
+    Combines the snapshot hash, its generation timestamp, and any additional
+    caller-provided discriminators so regenerated-but-identical payloads still
+    produce fresh ETags.
+    """
+    parts: list[str] = []
+    if isinstance(snapshot, dict):
+        snap_hash = snapshot.get("hash")
+        generated_at = snapshot.get("generated_at")
+        if snap_hash:
+            parts.append(str(snap_hash))
+        if generated_at:
+            parts.append(str(generated_at))
+    for part in extra_parts:
+        if part is None:
+            continue
+        parts.append(str(part))
+    payload = ":".join(parts)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
 def compute_library_apps_hash() -> str:
     """
     Computes a hash of all Apps table content to detect changes in library state.
@@ -281,11 +304,16 @@ def regenerate_cache(*paths: str):
         generate_snapshot(path)
 
 
-def regenerate_all_caches():
+def regenerate_all_caches(force: bool = False):
     """
     Ensure all known cache snapshots are up-to-date without forcing rebuilds.
     """
     for path in (LIBRARY_CACHE_FILE, LIBRARY_METADATA_CACHE_FILE, OVERRIDES_CACHE_FILE, SHOP_CACHE_FILE):
+        if force:
+            logger.info(f"Forcing regeneration of {os.path.basename(path)}")
+            generate_snapshot(path)
+            continue
+
         validator = _CACHE_VALIDATORS.get(path)
         if not validator:
             logger.warning(f"No validator registered for {path}; forcing regeneration.")

@@ -1,0 +1,171 @@
+<div id="content"
+     class="container-fluid mt-3"
+     data-placeholder-text="{{ placeholder_text | default('Image Unavailable', true) | e }}"
+     data-default-banner="{{ default_banner_url | default('', true) | e }}"
+     data-default-icon="{{ default_icon_url | default('', true) | e }}"
+     data-is-admin="{{ is_admin | default(false, true) | tojson }}"
+     data-hide-ghost-cards="{{ hide_ghost_cards | default(true, true) | tojson }}">
+
+    <div class="row gy-2 gx-3 align-items-center justify-content-md-center">
+
+        <div class="col-auto">
+            <div class="btn-group dropdown-center" role="group">
+                <div class="btn-group" role="group">
+                    <button id="filterDropdownBtn" type="button" class="btn btn-primary dropdown-toggle"
+                        data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false">
+                        <i class="bi bi-funnel-fill"></i>
+                    </button>
+                    <ul class="dropdown-menu">
+                        <li>
+                            <div class="dropdown-item">
+                                <div class="btn-group w-100" role="group" aria-label="Type filter">
+                                    <input type="radio" class="btn-check type-toggle" name="typeFilter" id="typeAll" autocomplete="off" checked>
+                                    <label class="btn btn-outline-primary" for="typeAll">All</label>
+
+                                    <input type="radio" class="btn-check type-toggle" name="typeFilter" id="typeBase" autocomplete="off">
+                                    <label class="btn btn-outline-primary" for="typeBase">Base</label>
+
+                                    <input type="radio" class="btn-check type-toggle" name="typeFilter" id="typeDlc" autocomplete="off">
+                                    <label class="btn btn-outline-primary" for="typeDlc">DLC</label>
+                                </div>
+                            </div>
+                        </li>
+                        <li>
+                            <hr class="dropdown-divider">
+                        </li>
+                        <li>
+                            <div class="dropdown-item">
+                                <div class="btn-group w-100" role="group" aria-label="Ownership filter">
+                                    <input type="radio" class="btn-check ownership-toggle" name="ownershipFilter" id="ownershipAll" autocomplete="off" checked>
+                                    <label class="btn btn-outline-primary" for="ownershipAll">All</label>
+
+                                    <input type="radio" class="btn-check ownership-toggle" name="ownershipFilter" id="ownershipOwned" autocomplete="off">
+                                    <label class="btn btn-outline-primary" for="ownershipOwned">Owned</label>
+
+                                    <input type="radio" class="btn-check ownership-toggle" name="ownershipFilter" id="ownershipMissing" autocomplete="off">
+                                    <label class="btn btn-outline-primary" for="ownershipMissing">Missing</label>
+                                </div>
+                            </div>
+                        </li>
+                        <li>
+                            <hr class="dropdown-divider">
+                        </li>
+                        <li>
+                            <div class="dropdown-item">
+                                <div class="btn-group w-100" role="group" aria-label="Update filter">
+                                    <input type="radio" class="btn-check update-toggle" name="updateFilter" id="updateAll" autocomplete="off" checked>
+                                    <label class="btn btn-outline-primary" for="updateAll">All</label>
+
+                                    <input type="radio" class="btn-check update-toggle" name="updateFilter" id="updateUpToDate" autocomplete="off">
+                                    <label class="btn btn-outline-primary" for="updateUpToDate">Up to date</label>
+
+                                    <input type="radio" class="btn-check update-toggle" name="updateFilter" id="updateMissingUpdate" autocomplete="off">
+                                    <label class="btn btn-outline-primary" for="updateMissingUpdate">Missing Update</label>
+                                </div>
+                            </div>
+                        </li>
+                        <li>
+                            <hr class="dropdown-divider">
+                        </li>
+                        <li>
+                            <div class="dropdown-item">
+                                <div class="btn-group w-100" role="group" aria-label="Completion filter">
+                                    <input type="radio" class="btn-check completion-toggle" name="completionFilter" id="completionAll" autocomplete="off" checked>
+                                    <label class="btn btn-outline-primary" for="completionAll">All</label>
+
+                                    <input type="radio" class="btn-check completion-toggle" name="completionFilter" id="completionComplete" autocomplete="off">
+                                    <label class="btn btn-outline-primary" for="completionComplete">Complete</label>
+
+                                    <input type="radio" class="btn-check completion-toggle" name="completionFilter" id="completionIncomplete" autocomplete="off">
+                                    <label class="btn btn-outline-primary" for="completionIncomplete">Incomplete</label>
+                                </div>
+                            </div>
+                        </li>
+                        <li>
+                            <hr class="dropdown-divider">
+                        </li>
+                        <li>
+                            <div class="dropdown-item">
+                                <div class="btn-group w-100" role="group" aria-label="Special filter">
+                                    <input type="radio" class="btn-check override-toggle" name="specialFilter" id="specialAll" autocomplete="off" checked>
+                                    <label class="btn btn-outline-primary" for="specialAll">All Titles</label>
+
+                                    <input type="radio" class="btn-check override-toggle" name="specialFilter" id="specialOverridden" autocomplete="off">
+                                    <label class="btn btn-outline-primary" for="specialOverridden">Overrides</label>
+
+                                    <input type="radio" class="btn-check override-toggle" name="specialFilter" id="specialUnrecognized" autocomplete="off">
+                                    <label class="btn btn-outline-primary" for="specialUnrecognized">Unrecognized</label>
+                                </div>
+                            </div>
+                        </li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-auto">
+            <div class="input-group input-group-lg">
+                <span class="input-group-text"><i class="bi bi-search"></i></span>
+                <input type="text" id="textFilter" class="form-control" placeholder="Search titles..." aria-label="Search titles" aria-describedby="textFilterAddon">
+            </div>
+        </div>
+
+        <div class="col-auto">
+            <div class="btn-group" role="group" aria-label="View controls">
+                <button id="view-toggle-btn-card" type="button"
+                        class="btn btn-primary view-toggle-btn active"
+                        data-view="card" title="Card view">
+                    <i class="bi bi-card-heading"></i>
+                </button>
+                <button id="view-toggle-btn-icon" type="button"
+                        class="btn btn-primary view-toggle-btn"
+                        data-view="icon" title="Icon grid">
+                    <i class="bi bi-grid-fill"></i>
+                </button>
+                <button id="view-toggle-btn-list" type="button"
+                        class="btn btn-primary view-toggle-btn"
+                        data-view="list" title="List view (coming soon)" disabled>
+                    <i class="bi bi-list-ul"></i>
+                </button>
+            </div>
+        </div>
+
+        <div class="col-auto">
+            <div class="btn-group dropdown-center" role="group">
+                <button id="itemsPerPageDropdownBtn" type="button" class="btn btn-primary dropdown-toggle"
+                    data-bs-toggle="dropdown" aria-expanded="false">
+                    Items per page
+                </button>
+                <ul class="dropdown-menu" aria-labelledby="itemsPerPageDropdownBtn">
+                    <li><button class="dropdown-item items-per-page" data-value="9">9</button></li>
+                    <li><button class="dropdown-item items-per-page" data-value="12">12</button></li>
+                    <li><button class="dropdown-item items-per-page" data-value="18">18</button></li>
+                    <li><button class="dropdown-item items-per-page" data-value="27">27</button></li>
+                    <li>
+                        <div class="dropdown-item">
+                            <input type="number" id="customItemsPerPage" class="form-control" placeholder="Custom">
+                            <button id="applyCustomItemsPerPage" class="btn btn-primary mt-2">Apply</button>
+                        </div>
+                    </li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="col-auto">
+            <input type="range" class="form-range" min="1" max="5" step="1" id="cardSizeRange">
+        </div>
+
+        <div class="col-auto">
+            <div class="pagination-summary text-nowrap small text-white-50 ms-2 d-none"
+                id="paginationSummary" aria-live="polite" role="status"></div>
+        </div>
+    </div>
+
+    <div class="grid-container" id="gridContainer">
+        <div class="row g-3" id="gameGrid"></div>
+    </div>
+
+    <nav aria-label="Page navigation" class="mt-3">
+        <ul class="pagination justify-content-center" id="paginationControls"></ul>
+    </nav>
+</div>

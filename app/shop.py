@@ -5,7 +5,7 @@ from overrides import (
     build_override_index,
     load_or_generate_overrides_snapshot
 )
-from cache import snapshot_has_required_shape
+from cache import build_snapshot_etag, snapshot_has_required_shape
 import titles as titles_lib
 from utils import load_json, save_json
 from Crypto.PublicKey import RSA
@@ -40,7 +40,7 @@ _TITLE_ID_BRACKET = re.compile(r"\[[0-9A-Fa-f]{16}\]")
 
 def generate_shop():
     snap = load_or_generate_shop_snapshot()
-    return snap["payload"], snap["hash"]
+    return snap["payload"], build_snapshot_etag(snap)
 
 def load_or_generate_shop_snapshot(force_regenerate: bool = False):
     saved = load_json(SHOP_CACHE_FILE)

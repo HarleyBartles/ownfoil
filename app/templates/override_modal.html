@@ -104,11 +104,19 @@
             <input id="ovr-banner-file" type="file" class="visually-hidden" accept=".jpg,.jpeg,.png,.webp">
             <input id="ovr-icon-file"   type="file" class="visually-hidden" accept=".jpg,.jpeg,.png,.webp">
 
+            {% set __ovr_placeholder = placeholder_text | default('Image Unavailable', true) %}
+            {% set __ovr_banner_fallback = default_banner_url | default('https://placehold.co/400x225/png?text=' ~ (__ovr_placeholder | urlencode), true) %}
+            {% set __ovr_icon_fallback = default_icon_url | default('https://placehold.co/400x400/png?text=' ~ (__ovr_placeholder | urlencode), true) %}
+
             <div class="ovr-preview-grid">
                 <!-- Banner preview -->
                 <div class="ovr-preview-wrap" id="ovr-banner-preview" data-kind="banner">
-                  <img id="ovr-banner-preview-img" src="" alt="Banner preview" class="ovr-preview-banner rounded border"
-                        onerror="if(this.src!==window.DEFAULT_BANNER)this.src=window.DEFAULT_BANNER;">
+                  <img id="ovr-banner-preview-img"
+                       src="{{ __ovr_banner_fallback }}"
+                       data-fallback="{{ __ovr_banner_fallback }}"
+                       alt="Banner preview"
+                       class="ovr-preview-banner rounded border"
+                       onerror="const fb=this.dataset.fallback||window.DEFAULT_BANNER||'';if(fb&&this.src!==fb)this.src=fb;">
                   <!-- remove (top-left) -->
                   <button type="button" class="ovr-remove-x" id="ovr-banner-remove"
                           title="Remove overridden banner" aria-label="Remove overridden banner">×</button>
@@ -122,8 +130,12 @@
 
                 <!-- Icon preview -->
                 <div class="ovr-preview-wrap" id="ovr-icon-preview" data-kind="icon">
-                  <img id="ovr-icon-preview-img" src="" alt="Icon preview" class="ovr-preview-icon rounded border"
-                        onerror="if(this.src!==window.DEFAULT_ICON)this.src=window.DEFAULT_ICON;">
+                  <img id="ovr-icon-preview-img"
+                       src="{{ __ovr_icon_fallback }}"
+                       data-fallback="{{ __ovr_icon_fallback }}"
+                       alt="Icon preview"
+                       class="ovr-preview-icon rounded border"
+                       onerror="const fb=this.dataset.fallback||window.DEFAULT_ICON||'';if(fb&&this.src!==fb)this.src=fb;">
                   <!-- remove (top-left) -->
                   <button type="button" class="ovr-remove-x" id="ovr-icon-remove"
                           title="Remove overridden icon" aria-label="Remove overridden icon">×</button>

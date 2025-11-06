@@ -8,7 +8,7 @@ from typing import Dict, Optional, Sequence, Union
 
 from sqlalchemy import or_
 
-from cache import compute_library_apps_hash, snapshot_has_required_shape
+from cache import build_snapshot_etag, compute_library_apps_hash, snapshot_has_required_shape
 from constants import *
 from db import *
 from settings import load_settings
@@ -1031,16 +1031,14 @@ def generate_library_snapshot():
     - Return the list used by the API layer.
     """
     # Load library from disk or regenerate if hash changed
-    saved = load_or_generate_library_snapshot()  # {'hash': ..., 'titledb_commit': ..., 'library': [...]}
+    saved = load_or_generate_library_snapshot()  # {'hash': ..., 'titledb_commit': ..., 'library': [...], 'generated_at': ...}
     if not saved:
         empty_etag = hashlib.sha256(b":").hexdigest()
         return [], empty_etag
 
     library = saved.get('library') or []
-    payload_hash = saved.get('hash') or ""
     titledb_commit = saved.get('titledb_commit') or ""
-    etag_source = f"{payload_hash}:{titledb_commit}".encode("utf-8")
-    etag = hashlib.sha256(etag_source).hexdigest()
+    etag = build_snapshot_etag(saved, titledb_commit)
     return library, etag
 
 def load_or_generate_library_snapshot(force_regenerate: bool = False):
