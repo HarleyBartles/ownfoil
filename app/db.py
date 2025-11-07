@@ -411,6 +411,7 @@ def get_all_apps(include_files: bool = False):
                 "identification_type": (getattr(f, "identification_type", None) or "").lower(),
                 "last_attempt": getattr(f, "last_attempt", None),
                 "created_at": getattr(f, "created_at", None),
+                "size": getattr(f, "size", None),
             } for f in (app.files or [])]
         apps_list.append(row)
 

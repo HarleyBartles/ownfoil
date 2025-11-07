@@ -105,7 +105,7 @@
             <input id="ovr-icon-file"   type="file" class="visually-hidden" accept=".jpg,.jpeg,.png,.webp">
 
             {% set __ovr_placeholder = placeholder_text | default('Image Unavailable', true) %}
-            {% set __ovr_banner_fallback = default_banner_url | default('https://placehold.co/400x225/png?text=' ~ (__ovr_placeholder | urlencode), true) %}
+            {% set __ovr_banner_fallback = default_banner_url | default('https://placehold.co/1920x1080/png?text=' ~ (__ovr_placeholder | urlencode), true) %}
             {% set __ovr_icon_fallback = default_icon_url | default('https://placehold.co/400x400/png?text=' ~ (__ovr_placeholder | urlencode), true) %}
 
             <div class="ovr-preview-grid">
@@ -116,7 +116,7 @@
                        data-fallback="{{ __ovr_banner_fallback }}"
                        alt="Banner preview"
                        class="ovr-preview-banner rounded border"
-                       onerror="const fb=this.dataset.fallback||window.DEFAULT_BANNER||'';if(fb&&this.src!==fb)this.src=fb;">
+                       onerror="const fb=this.dataset.fallback||window.DEFAULT_BANNER||'';if(this.src!==fb)this.src=fb;">
                   <!-- remove (top-left) -->
                   <button type="button" class="ovr-remove-x" id="ovr-banner-remove"
                           title="Remove overridden banner" aria-label="Remove overridden banner">×</button>
@@ -135,7 +135,7 @@
                        data-fallback="{{ __ovr_icon_fallback }}"
                        alt="Icon preview"
                        class="ovr-preview-icon rounded border"
-                       onerror="const fb=this.dataset.fallback||window.DEFAULT_ICON||'';if(fb&&this.src!==fb)this.src=fb;">
+                       onerror="const fb=this.dataset.fallback||window.DEFAULT_ICON||'';if(this.src!==fb)this.src=fb;">
                   <!-- remove (top-left) -->
                   <button type="button" class="ovr-remove-x" id="ovr-icon-remove"
                           title="Remove overridden icon" aria-label="Remove overridden icon">×</button>

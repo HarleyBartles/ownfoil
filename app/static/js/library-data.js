@@ -15,6 +15,32 @@
     const combinedCacheVersion = Number.isFinite(options.combinedCacheVersion)
       ? Number(options.combinedCacheVersion)
       : 1;
+    const reuseSharedInstance = options.reuseSharedInstance !== false;
+    const normalizeDetailBasePath = (value) => {
+      if (typeof value !== 'string') return '/games';
+      let trimmed = value.trim();
+      if (!trimmed) return '/games';
+      if (!trimmed.startsWith('/')) trimmed = `/${trimmed}`;
+      if (trimmed.length > 1 && trimmed.endsWith('/')) trimmed = trimmed.slice(0, -1);
+      return trimmed;
+    };
+    let detailBasePath = normalizeDetailBasePath(
+      options.detailBasePath
+        || (namespace.Config && namespace.Config.get && namespace.Config.get('detailBasePath'))
+        || '/games',
+    );
+    options.detailBasePath = detailBasePath;
+    const existingShared = reuseSharedInstance ? (LibraryDataNs._sharedManager || null) : null;
+    if (existingShared) {
+      if (typeof existingShared.setDetailBasePath === 'function') {
+        existingShared.setDetailBasePath(detailBasePath);
+      }
+      if (Object.prototype.hasOwnProperty.call(options, 'shouldHideGhostCards')
+        && typeof existingShared.setHideGhostCards === 'function') {
+        existingShared.setHideGhostCards(!!options.shouldHideGhostCards);
+      }
+      return existingShared;
+    }
 
     const CombinedCache = (
       CacheHelpers &&
@@ -132,6 +158,37 @@
       return clone;
     }
 
+    function buildRedirectedCloneFromProjection(game, correctedId, projection) {
+      if (!game || typeof game !== 'object') return null;
+      if (!projection || typeof projection !== 'object') return null;
+      const baseClone = cloneGame(game) || { ...game };
+      const normalizedTarget = normalizeAppId(correctedId)
+        || normalizeAppId(projection.app_id)
+        || normalizeAppId(projection.title_id);
+      if (normalizedTarget) {
+        baseClone.app_id = normalizedTarget;
+        baseClone.title_id = normalizedTarget;
+        baseClone.id = normalizedTarget;
+      }
+      if (!baseClone._orig && game._orig) {
+        baseClone._orig = { ...game._orig };
+      }
+      if (typeof overridesModule?.applyProjectionToGame === 'function') {
+        overridesModule.applyProjectionToGame(baseClone, projection);
+      } else {
+        Object.entries(projection).forEach(([key, value]) => {
+          if (Array.isArray(value)) {
+            baseClone[key] = value.slice();
+          } else if (value && typeof value === 'object') {
+            baseClone[key] = { ...value };
+          } else {
+            baseClone[key] = value;
+          }
+        });
+      }
+      return baseClone;
+    }
+
     // --- Metadata helpers ---------------------------------------------------
     function updateMetadataNamespace(entries, baseLookup) {
       const metadataNs = namespace.Metadata = namespace.Metadata || {};
@@ -164,7 +221,8 @@
         game._searchBlob = null;
         game._searchTokens = null;
         game._descriptionSearchTokens = null;
-        if ((game.app_type || '').toUpperCase() === 'DLC') {
+        const gameType = (game.app_type || '').toUpperCase();
+        if (gameType === 'DLC') {
           game.base_name = game._orig?.title_id_name || game.base_name;
         }
         game.display_title = undefined;
@@ -184,9 +242,34 @@
         }
         if (typeof entry.display_title === 'string') {
           game.display_title = entry.display_title;
-          if ((game.app_type || '').toUpperCase() === 'DLC') {
+          if (gameType === 'DLC') {
             game.base_name = entry.display_title;
           }
+        }
+
+        const overrideEntry = overridesModule?.getOverrideForGame?.(game);
+        const redirectInfo = overridesModule?.getRedirectForApp?.(game?.app_id);
+        const correctedCandidate = overrideEntry?.corrected_title_id
+          || redirectInfo?.corrected_title_id
+          || (redirectInfo?.projection && (redirectInfo.projection.app_id || redirectInfo.projection.title_id));
+        const normalizedOverride = normalizeAppId(correctedCandidate);
+        const normalizedCurrent = normalizeAppId(game.app_id);
+        if (normalizedOverride && normalizedOverride !== normalizedCurrent) {
+          const target = state.games.find((g) => normalizeAppId(g?.app_id) === normalizedOverride);
+          if (target) {
+            game._redirectedGame = cloneGame(target);
+          } else if (redirectInfo?.projection) {
+            const stub = buildRedirectedCloneFromProjection(game, normalizedOverride, redirectInfo.projection);
+            if (stub) {
+              game._redirectedGame = stub;
+            } else {
+              delete game._redirectedGame;
+            }
+          } else {
+            delete game._redirectedGame;
+          }
+        } else {
+          delete game._redirectedGame;
         }
       });
     }
@@ -706,11 +789,28 @@
       });
     }
 
+    function getDetailUrlForGame(game, overrideAppId) {
+      const appId = normalizeAppId(overrideAppId || game?.app_id);
+      if (!appId) return '';
+      return `${detailBasePath}/${encodeURIComponent(appId)}`;
+    }
+
     function setHideGhostCards(flag) {
       options.shouldHideGhostCards = !!flag;
     }
 
-    return {
+    function setDetailBasePath(value) {
+      const normalized = normalizeDetailBasePath(value);
+      if (!normalized) return;
+      if (normalized === detailBasePath) {
+        options.detailBasePath = normalized;
+        return;
+      }
+      detailBasePath = normalized;
+      options.detailBasePath = detailBasePath;
+    }
+
+    const api = {
       state,
       options,
       normalizeAppId,
@@ -735,8 +835,14 @@
       getBaseKeyForAppId,
       getGameByAppId,
       getGamesForBaseKey,
+      getDetailUrlForGame,
       setHideGhostCards,
+      setDetailBasePath,
     };
+    if (reuseSharedInstance) {
+      LibraryDataNs._sharedManager = api;
+    }
+    return api;
   }
 
   LibraryDataNs.create = create;

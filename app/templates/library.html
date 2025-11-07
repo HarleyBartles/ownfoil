@@ -10,7 +10,10 @@
   default_banner_url=default_banner_url,
   default_icon_url=default_icon_url,
   hide_ghost_cards=hide_ghost_cards,
-  is_admin=is_admin
+  is_admin=is_admin,
+  initial_detail_app_id=initial_detail_app_id,
+  detail_base_path=detail_base_path,
+  match_info_language=match_info_language
 %}
   {% include 'library_content.html' %}
 {% endwith %}
@@ -19,10 +22,15 @@
   {% include 'override_modal.html' %}
 {% endif %}
 
+{% include 'game_detail_modal.html' %}
+
 <script src="{{ url_for('static', filename='js/page-config.js') }}"></script>
 <script src="{{ url_for('static', filename='js/cache.js') }}"></script>
 <script src="{{ url_for('static', filename='js/overrides.js') }}"></script>
 <script src="{{ url_for('static', filename='js/library-data.js') }}"></script>
+<script src="{{ url_for('static', filename='js/languages.js') }}"></script>
+<script src="{{ url_for('static', filename='js/status-badges.js') }}"></script>
+<script src="{{ url_for('static', filename='js/game-detail.js') }}"></script>
 <script src="{{ url_for('static', filename='js/pagination.js') }}"></script>
 <script src="{{ url_for('static', filename='js/library-page.js') }}"></script>
 {% endblock %}

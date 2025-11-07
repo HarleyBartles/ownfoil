@@ -1,5 +1,5 @@
 <nav class="navbar navbar-expand-lg bg-body-secondary bg-dark border-bottom border-body" data-bs-theme="dark">
-    {% set library_active = title == 'Library' %}
+    {% set library_active = title in ['Library', 'Game Detail'] %}
     {% set settings_active = title == 'Settings' %}
     {% set setup_active = title == 'Setup' %}
     <div class="container-fluid">

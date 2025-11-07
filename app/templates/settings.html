@@ -352,6 +352,14 @@
                         When enabled, suppressed (ghost) missing DLC cards are hidden from non-admin shop users.
                     </div>
                 </div>
+                <div class="mb-3 form-check">
+                    <input type="checkbox" class="form-check-input" id="matchInfoLanguageCheck"
+                        aria-describedby="matchInfoLanguageCheckHelp">
+                    <label class="form-check-label" for="matchInfoLanguageCheck">Match info language</label>
+                    <div id="matchInfoLanguageCheckHelp" class="form-text">
+                        When enabled, the info line in the detail modal is hidden if it is written in a different language than the game’s region/language.
+                    </div>
+                </div>
 
                 <div class="mb-3">
                     <label for="motdTextArea" class="form-label">Message of the day:</label>
@@ -905,6 +913,7 @@
         const isPublic = getCheckboxStatus("publicShopCheck");
         const encrypt = getCheckboxStatus("encryptShopCheck");
         const hideGhostCards = getCheckboxStatus("hideGhostCardsCheck");
+        const matchInfoLanguage = getCheckboxStatus("matchInfoLanguageCheck");
         const motd = $('#motdTextArea').val();
         const placeholder = ($('#placeholderTextInput').val() || "").trim();
         const data = {
@@ -912,6 +921,7 @@
             public: isPublic,
             encrypt: encrypt,
             hide_ghost_cards: hideGhostCards,
+            match_info_language: matchInfoLanguage,
             motd: motd,
             placeholder_text: placeholder
         };
@@ -1060,6 +1070,9 @@
             const hideGhostCardsSetting = shopSettings['hide_ghost_cards'];
             const hideGhostCardsChecked = (hideGhostCardsSetting === undefined) ? true : hideGhostCardsSetting;
             $("#hideGhostCardsCheck").prop("checked", hideGhostCardsChecked);
+            const matchInfoLanguageSetting = shopSettings['match_info_language'];
+            const matchInfoLanguageChecked = (matchInfoLanguageSetting === undefined) ? true : matchInfoLanguageSetting;
+            $("#matchInfoLanguageCheck").prop("checked", matchInfoLanguageChecked);
             if (!shopSettings['host']) {
                 $("#missingShopHostAlert").css('display', '');
             } else if (!shopSettings['hauth']) {

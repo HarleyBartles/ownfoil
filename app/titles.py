@@ -578,19 +578,61 @@ def get_game_info(title_id: Optional[str]):
             title_info.get("description")
             or title_info.get("longDescription")
             or title_info.get("desc")
-            or title_info.get("overview")      # ← include what you previously pulled from raw
+            or title_info.get("overview")
             or None
         )
 
+        def _clean_str(value):
+            if value is None:
+                return None
+            text = str(value).strip()
+            return text or None
+
+        def _clean_list(value):
+            if isinstance(value, (list, tuple, set)):
+                cleaned = [str(v).strip() for v in value if isinstance(v, (str, bytes)) and str(v).strip()]
+                return cleaned if cleaned else None
+            if isinstance(value, str) and value.strip():
+                return [value.strip()]
+            return None
+
+        screenshots = _clean_list(title_info.get("screenshots")) or []
+        languages = _clean_list(title_info.get("languages")) or []
+        rating_content = _clean_list(title_info.get("ratingContent")) or []
+        category = _clean_list(title_info.get("category"))
+        regions = _clean_list(title_info.get("regions"))
+
+        number_of_players = title_info.get("numberOfPlayers")
+        if isinstance(number_of_players, (int, float)):
+            number_of_players = str(int(number_of_players))
+        number_of_players = _clean_str(number_of_players)
+
+        rating_value = title_info.get("rating")
+        if isinstance(rating_value, (int, float)):
+            rating_value = str(int(rating_value))
+        rating_value = _clean_str(rating_value)
+
         return {
-            "name":       (title_info.get("name") or "").strip() or None,
-            "bannerUrl":  title_info.get("bannerUrl"),
-            "iconUrl":    title_info.get("iconUrl"),
+            "name":       _clean_str(title_info.get("name")) or None,
+            "bannerUrl":  _clean_str(title_info.get("bannerUrl")) or None,
+            "iconUrl":    _clean_str(title_info.get("iconUrl")) or None,
             "id":         title_info.get("id") or tid,
-            "category":   title_info.get("category", ""),
-            "region":     title_info.get("region"),
+            "category":   category or [],
+            "region":     _clean_str(title_info.get("region")),
+            "regions":    regions or [],
             "description": description,
             "release_date": release_date,
+            "screenshots": screenshots,
+            "developer": _clean_str(title_info.get("developer")),
+            "publisher": _clean_str(title_info.get("publisher")),
+            "numberOfPlayers": number_of_players,
+            "languages": languages,
+            "language": _clean_str(title_info.get("language")),
+            "intro": _clean_str(title_info.get("intro")),
+            "rating": rating_value,
+            "ratingContent": rating_content,
+            "frontBoxArt": _clean_str(title_info.get("frontBoxArt")),
+            "nsuId": _clean_str(title_info.get("nsuId")),
         }
 
     except Exception:

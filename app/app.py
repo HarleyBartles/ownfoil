@@ -30,7 +30,7 @@ from cache import regenerate_all_caches
 import titledb
 import os
 from urllib.parse import quote_plus
-from typing import Union
+from typing import Optional, Union
 
 def init():
     global watcher
@@ -325,9 +325,9 @@ def _resolve_placeholder_assets(shop_conf: dict[str, object]) -> tuple[str, str,
     raw_banner = shop_conf.get('default_banner_url')
     if isinstance(raw_banner, str):
         banner_candidate = raw_banner.strip()
-        default_banner: str = banner_candidate or f"https://placehold.co/400x225/png?text={encoded}"
+        default_banner: str = banner_candidate or f"https://placehold.co/1920x1080/png?text={encoded}"
     else:
-        default_banner = f"https://placehold.co/400x225/png?text={encoded}"
+        default_banner = f"https://placehold.co/1920x1080/png?text={encoded}"
 
     raw_icon = shop_conf.get('default_icon_url')
     if isinstance(raw_icon, str):
@@ -339,8 +339,27 @@ def _resolve_placeholder_assets(shop_conf: dict[str, object]) -> tuple[str, str,
     return placeholder, default_banner, default_icon
 
 
-def _render_library_template(shop_conf: dict[str, object]) -> str:
+def _resolve_detail_base_path(shop_conf: dict[str, object]) -> str:
+    raw_detail_path = shop_conf.get('detail_base_path')
+    if isinstance(raw_detail_path, str):
+        detail_base_path: str = raw_detail_path.strip()
+    else:
+        detail_base_path = ''
+    if not detail_base_path:
+        detail_base_path = '/games'
+    elif not detail_base_path.startswith('/'):
+        detail_base_path = f'/{detail_base_path}'
+    if detail_base_path.endswith('/') and detail_base_path != '/':
+        detail_base_path = detail_base_path[:-1]
+    return detail_base_path
+
+
+def _render_library_template(
+    shop_conf: dict[str, object],
+    initial_app_id: Optional[str] = None,
+) -> str:
     placeholder_text, default_banner_url, default_icon_url = _resolve_placeholder_assets(shop_conf)
+    detail_base_path = _resolve_detail_base_path(shop_conf)
     return render_template(
         'library.html',
         title='Library',
@@ -349,7 +368,10 @@ def _render_library_template(shop_conf: dict[str, object]) -> str:
         placeholder_text=placeholder_text,
         default_banner_url=default_banner_url,
         default_icon_url=default_icon_url,
-        hide_ghost_cards=bool(shop_conf.get('hide_ghost_cards', True))
+        detail_base_path=detail_base_path,
+        initial_detail_app_id=initial_app_id,
+        hide_ghost_cards=bool(shop_conf.get('hide_ghost_cards', True)),
+        match_info_language=bool(shop_conf.get('match_info_language', True)),
     )
 
 
@@ -360,19 +382,36 @@ def render_library_page() -> str:
     return _render_library_template(shop_conf)
 
 
-@app.route('/library')
-def library() -> Union[Response, str]:
+def _render_library_page_response(initial_app_id: Optional[str] = None) -> Union[Response, str]:
     reload_conf()
     shop_conf = app_settings.get('shop', {})
     public_enabled = bool(shop_conf.get('public', False))
     if not admin_account_created() or public_enabled:
-        return _render_library_template(shop_conf)
+        return _render_library_template(shop_conf, initial_app_id)
 
     @access_required('shop')
     def guarded_library() -> Union[Response, str]:
-        return _render_library_template(shop_conf)
+        return _render_library_template(shop_conf, initial_app_id)
 
     return guarded_library()
+
+
+@app.route('/library')
+def library() -> Union[Response, str]:
+    raw_initial = request.args.get('game') or request.args.get('app_id')
+    initial_app_id = raw_initial.strip().upper() if isinstance(raw_initial, str) and raw_initial.strip() else None
+    return _render_library_page_response(initial_app_id)
+
+
+@app.route('/games/<path:app_id>')
+@access_required('shop')
+def game_detail(app_id: str) -> Union[Response, str]:
+    try:
+        normalized = normalize_id(app_id, "app")
+    except Exception:
+        normalized = None
+    canonical_app_id = (normalized or app_id or "").strip().upper()
+    return _render_library_page_response(canonical_app_id)
 
 @app.route('/')
 def index():

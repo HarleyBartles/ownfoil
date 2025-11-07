@@ -1064,6 +1064,35 @@ def _generate_library_snapshot():
 
     with titles_lib.titledb_session("generate_library"):
         titles = get_all_apps(include_files=True)
+        file_info_map: dict[tuple[str, int], dict] = {}
+
+        def _app_version_key(app_id, app_version):
+            if not app_id:
+                return None
+            version = 0
+            if app_version not in (None, ""):
+                try:
+                    version = int(app_version)
+                except (TypeError, ValueError):
+                    try:
+                        version = int(str(app_version).strip() or 0)
+                    except Exception:
+                        version = 0
+            return (app_id.upper(), version)
+
+        def _record_file_info(entry: dict) -> dict | None:
+            key = _app_version_key(entry.get('app_id'), entry.get('app_version'))
+            if not key:
+                return None
+            info = _pick_best_file(entry.get('files'))
+            if info:
+                file_info_map[key] = info
+            return info
+
+        # Preload file info (including UPDATES) before transforming rows so lookups always succeed.
+        for entry in titles:
+            _record_file_info(entry)
+
         games_info = []
         processed_dlc_apps = set()  # Track processed DLC app_ids to avoid duplicates
 
@@ -1086,10 +1115,13 @@ def _generate_library_snapshot():
             if has_none_value:
                 logger.warning(f'File contains None value, it will be skipped: {title}')
                 continue
+            raw_app_version = title.get('app_version')
+            app_version_key = _app_version_key(title.get('app_id'), raw_app_version)
+            best_file_info = file_info_map.get(app_version_key) if app_version_key else None
+
             if title['app_type'] == APP_TYPE_UPD:
                 continue
 
-            raw_app_version = title.get('app_version')
             try:
                 title['app_version'] = int(raw_app_version) if raw_app_version is not None else 0
             except (TypeError, ValueError):
@@ -1104,22 +1136,53 @@ def _generate_library_snapshot():
             metadata_missing = _title_metadata_missing(lookup_id)
 
             title.update(info_from_titledb)
+
+            def _normalize_list_field(field_name):
+                raw_value = title.get(field_name)
+                normalized: list[str] = []
+                if isinstance(raw_value, (list, tuple, set)):
+                    for item in raw_value:
+                        if isinstance(item, (str, bytes)):
+                            trimmed = str(item).strip()
+                            if trimmed:
+                                normalized.append(trimmed)
+                elif isinstance(raw_value, str):
+                    trimmed = raw_value.strip()
+                    if trimmed:
+                        normalized.append(trimmed)
+
+                title[field_name] = normalized
+
+            _normalize_list_field('category')
+            _normalize_list_field('screenshots')
+            _normalize_list_field('languages')
+            _normalize_list_field('regions')
+            _normalize_list_field('ratingContent')
+
             title['has_title_db'] = not metadata_missing
             title['is_unrecognized'] = metadata_missing
 
             # Stable sort/display key:
             # - BASE: use its own (family) name
             # - DLC : use the family/base title name (so DLCs sort alongside their bases)
+            best_file = best_file_info or {}
+            base_file_size = best_file.get('size') or 0
+            title['file_basename'] = best_file.get('basename')
+            title['file_size'] = base_file_size or None
+
             if title['app_type'] == APP_TYPE_DLC:
                 family_info = titles_lib.get_game_info(title['title_id'])  # family/base lookup
                 if family_info:
                     # Use the family's artwork when this DLC lacks its own assets so cards don’t show the gray placeholder.
                     fallback_banner = family_info.get("bannerUrl")
                     fallback_icon = family_info.get("iconUrl")
+                    fallback_screens = family_info.get("screenshots")
                     if not (title.get("bannerUrl") or title.get("banner_path")) and fallback_banner:
                         title["bannerUrl"] = fallback_banner
                     if not (title.get("iconUrl") or title.get("icon_path")) and fallback_icon:
                         title["iconUrl"] = fallback_icon
+                    if not title.get("screenshots") and isinstance(fallback_screens, list) and fallback_screens:
+                        title["screenshots"] = [s for s in fallback_screens if isinstance(s, str) and s.strip()]
                 family_name = (family_info or {}).get('name') or title.get('name')
                 title['title_id_name'] = family_name or 'Unrecognized'
             else:
@@ -1161,6 +1224,28 @@ def _generate_library_snapshot():
                     })
 
                 title['version'] = sorted(version_list, key=lambda x: x['version'])
+
+                total_size = base_file_size
+                latest_owned_version = None
+                latest_owned_size = 0
+                for update_app in update_apps:
+                    update_key = _app_version_key(update_app.get('app_id'), update_app.get('app_version'))
+                    if not update_key:
+                        continue
+                    update_info = file_info_map.get(update_key) or {}
+                    update_size = update_info.get('size') or 0
+                    is_owned = bool(update_app.get('owned')) or update_size > 0
+                    if not is_owned:
+                        continue
+                    version_val = update_key[1]
+                    if latest_owned_version is None or version_val > latest_owned_version:
+                        latest_owned_version = version_val
+                        latest_owned_size = update_size
+
+                if latest_owned_version is not None and latest_owned_size:
+                    total_size += latest_owned_size
+
+                title['file_size'] = total_size or None
 
                 # Recompute DLC completion locally based on current library data
                 available_dlc_apps = [
@@ -1224,8 +1309,6 @@ def _generate_library_snapshot():
                     # No local rows → nothing to update
                     title['has_latest_version'] = True
 
-            # File basename hint for organizer/UI
-            title['file_basename'] = _best_file_basename(title.get('files'))
             # We don't need to send the full files payload to the client cache, and it can carry datetimes which are not serializable
             title.pop('files', None)
 
@@ -1327,7 +1410,7 @@ def _generate_library_snapshot():
         return library_data
     
 
-def _best_file_basename(files):
+def _pick_best_file(files):
     if not files:
         return None
 
@@ -1349,9 +1432,13 @@ def _best_file_basename(files):
         )
 
     best = max(files, key=score)
-    if best.get("filename"):
-        return best["filename"]
-    return os.path.basename(best.get("filepath") or "") or None
+    basename = best.get("filename")
+    if not basename:
+        basename = os.path.basename(best.get("filepath") or "") or None
+    return {
+        "basename": basename,
+        "size": best.get("size"),
+    }
 
 def _add_files_without_apps(games_info):
     unid_files = Files.query.filter(
@@ -1388,6 +1475,7 @@ def _add_files_without_apps(games_info):
 
             # What the UI needs
             'file_basename': fname,
+            'file_size': getattr(f, "size", None),
             'filename': fname,
 
             # Other fields the UI expects to exist

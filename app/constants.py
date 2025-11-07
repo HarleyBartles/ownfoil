@@ -72,6 +72,7 @@ DEFAULT_SETTINGS = {
         "hauth": "",
         "placeholder_text": "Image Unavailable",
         "hide_ghost_cards": True,
+        "match_info_language": True,
     }
 }
 

@@ -11,6 +11,7 @@
   const LibraryDataNs = namespace.LibraryData || null;
   const PageConfig = namespace.Config || null;
   const CacheModule = namespace.Cache || null;
+  const getDetailModule = () => (global.Ownfoil && global.Ownfoil.Detail) ? global.Ownfoil.Detail : null;
   const contentRoot = document.getElementById('content');
   const configSnapshot = PageConfig?.applyFromElement
       ? PageConfig.applyFromElement(contentRoot)
@@ -36,6 +37,105 @@
   const pruneGhostsInPlace = (list) => dataManager.pruneGhostsInPlace
     ? dataManager.pruneGhostsInPlace(list)
     : list;
+  const openDetailFromLibrary = (appId, historyMode = 'push') => {
+    const Detail = getDetailModule();
+    if (!Detail || typeof Detail.open !== 'function') return;
+    Detail.open(appId, { historyMode });
+  };
+
+  const bindDetailTrigger = (element, game, options = {}) => {
+    const detailModule = getDetailModule();
+    if (!detailModule || typeof detailModule.open !== 'function') return;
+    if (!element || !game || !game.app_id) return;
+    const excludeSelector = typeof options.excludeSelector === 'string' ? options.excludeSelector : null;
+
+    const isExcludedTarget = (target) => {
+      if (!excludeSelector) return false;
+      if (!(target instanceof Element)) return false;
+      return !!target.closest(excludeSelector);
+    };
+    const shouldIgnoreEvent = (event) => isExcludedTarget(event.target);
+
+    element.dataset.appId = game.app_id;
+    element.classList.add('game-detail-trigger');
+    element.style.cursor = 'pointer';
+    element.setAttribute('role', 'button');
+    element.setAttribute('tabindex', '0');
+
+    let recentTouchHandled = false;
+    let touchState = null;
+
+    element.addEventListener('touchstart', (event) => {
+      if (event.touches.length !== 1) {
+        touchState = null;
+        return;
+      }
+      const { clientX, clientY } = event.touches[0];
+      touchState = {
+        startX: clientX,
+        startY: clientY,
+        moved: false,
+        ignore: isExcludedTarget(event.target),
+      };
+    }, { passive: true });
+
+    element.addEventListener('touchmove', (event) => {
+      if (!touchState || touchState.moved) return;
+      if (event.touches.length !== 1) {
+        touchState.moved = true;
+        return;
+      }
+      const { clientX, clientY } = event.touches[0];
+      const dx = clientX - touchState.startX;
+      const dy = clientY - touchState.startY;
+      const distance = Math.sqrt((dx * dx) + (dy * dy));
+      if (distance > 10) {
+        touchState.moved = true;
+      }
+    }, { passive: true });
+
+    element.addEventListener('touchend', (event) => {
+      if (!touchState || touchState.moved || touchState.ignore) {
+        touchState = null;
+        return;
+      }
+      touchState = null;
+      recentTouchHandled = true;
+      setTimeout(() => { recentTouchHandled = false; }, 250);
+      event.preventDefault();
+      openDetailFromLibrary(game.app_id, 'push');
+    });
+
+    element.addEventListener('click', (event) => {
+      if (shouldIgnoreEvent(event)) return;
+      if (recentTouchHandled) {
+        recentTouchHandled = false;
+        return;
+      }
+      if (event.defaultPrevented) return;
+      if (event.metaKey || event.ctrlKey) {
+        const href = typeof dataManager.getDetailUrlForGame === 'function'
+          ? dataManager.getDetailUrlForGame(game)
+          : null;
+        if (href) {
+          global.open(href, '_blank', 'noopener');
+        }
+        return;
+      }
+      if (event.shiftKey || event.altKey) return;
+      if (typeof event.button === 'number' && event.button !== 0) return;
+      openDetailFromLibrary(game.app_id, 'push');
+    });
+
+    element.addEventListener('keydown', (event) => {
+      if (shouldIgnoreEvent(event)) return;
+      if (event.defaultPrevented) return;
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        openDetailFromLibrary(game.app_id, 'push');
+      }
+    });
+  };
 
   const VALID_VIEWS = new Set(['card', 'icon']);
   const normalizeView = (value) => {
@@ -291,17 +391,20 @@
               const tagsContainer = document.createElement('div');
               tagsContainer.className = 'tags-container d-flex gap-1 align-items-center';
 
-              const typeBadge = document.createElement('span');
-              typeBadge.className = `badge rounded-pill ${game.owned === false ? 'text-bg-warning' : 'text-bg-info'} game-tag`;
-              typeBadge.textContent = game.app_type || '';
-              tagsContainer.appendChild(typeBadge);
+              const badgesModule = namespace.StatusBadges || null;
+              if (badgesModule?.createTypeBadge) {
+                  const typeBadge = badgesModule.createTypeBadge(game);
+                  if (typeBadge) tagsContainer.appendChild(typeBadge);
+              } else {
+                  const fallbackBadge = document.createElement('span');
+                  fallbackBadge.className = `badge rounded-pill ${game.owned === false ? 'text-bg-warning' : 'text-bg-info'} game-tag`;
+                  fallbackBadge.textContent = game.app_type || '';
+                  tagsContainer.appendChild(fallbackBadge);
+              }
 
-              if (typeof game.has_all_dlcs !== 'undefined') {
-                  // DLC completion badge
-                  const dlcBadge = document.createElement('span');
-                  dlcBadge.className = `badge rounded-pill game-tag text-bg-${game.has_all_dlcs ? 'success' : 'warning'}`;
-                  dlcBadge.innerHTML = '<i class="bi bi-box-seam-fill"></i>';
-                  tagsContainer.appendChild(dlcBadge);
+              if (badgesModule?.createDlcBadge) {
+                  const dlcBadge = badgesModule.createDlcBadge(game);
+                  if (dlcBadge) tagsContainer.appendChild(dlcBadge);
               }
 
               if (isSuppressed) {
@@ -313,70 +416,21 @@
                   suppressedBadge.setAttribute('data-bs-placement', 'top');
                   suppressedBadge.setAttribute('data-bs-title', 'Ignored for completion filters (ghost card)');
                   tagsContainer.appendChild(suppressedBadge);
-              } else if (typeof game.has_latest_version !== 'undefined') {
-                  // Version badge (popover when rich history is available).
-                  const versionBadge = document.createElement('span');
-                  versionBadge.className = 'badge rounded-pill game-tag version-tag';
-                  versionBadge.classList.add(game.has_latest_version ? 'text-bg-success' : 'text-bg-warning');
-                  const versionTitle = `${game.name} [${game.title_id}] Updates`;
-                  versionBadge.title = versionTitle;
-                  versionBadge.innerHTML = `<i class='bi ${game.has_latest_version ? 'bi-check-circle-fill' : 'bi-arrow-down-circle'}'></i>`;
-
-                  const rawVersions = Array.isArray(game.version)
-                      ? game.version.filter(entry => entry && typeof entry === 'object')
-                      : [];
-                  const baseReleaseDate = (() => {
-                      const candidate = typeof game.release_date === 'string' ? game.release_date.trim() : '';
-                      if (candidate && candidate.toLowerCase() !== 'unknown') return candidate;
-                      const orig = game._orig?.release_date;
-                      return typeof orig === 'string' ? orig : '';
-                  })();
-
-                  const normalizedVersions = rawVersions.map((entry) => {
-                      const versionNumber = Number.isFinite(Number(entry.version)) ? Number(entry.version) : entry.version;
-                      const isBaseVersion = Number(versionNumber) === 0;
-                      const rawDate = typeof entry.release_date === 'string' ? entry.release_date.trim() : '';
-                      let displayDate = rawDate;
-                      if ((!displayDate || displayDate.toLowerCase() === 'unknown') && isBaseVersion && baseReleaseDate) {
-                          displayDate = baseReleaseDate;
-                      }
-                      if (!displayDate) {
-                          displayDate = isBaseVersion ? 'Base release' : 'Unknown';
-                      }
-                      return {
-                          versionNumber,
-                          owned: entry.owned === true,
-                          displayDate,
-                          isBaseVersion,
-                      };
+              } else if (badgesModule?.createVersionBadge) {
+                  const versionBadge = badgesModule.createVersionBadge(game, {
+                      popoverClass: 'version-popover',
                   });
-
-                  if (normalizedVersions.length) {
-                      const popoverContent = normalizedVersions
-                          .map(entry => `${entry.displayDate}: v${entry.versionNumber} ${entry.owned ? 'Owned' : 'Missing'}`)
-                          .join('<br>');
-                      versionBadge.setAttribute('data-bs-toggle', 'popover');
-                      versionBadge.setAttribute('data-bs-placement', 'top');
-                      versionBadge.setAttribute('data-bs-trigger', 'click');
-                      versionBadge.setAttribute('data-bs-custom-class', 'version-popover');
-                      versionBadge.setAttribute('data-bs-title', versionTitle);
-                      versionBadge.setAttribute('data-bs-content', popoverContent);
-                      versionBadge.setAttribute('data-bs-html', 'true');
-                      versionBadge.style.cursor = 'pointer';
-                  } else {
-                      versionBadge.setAttribute('data-bs-toggle', 'tooltip');
-                      versionBadge.setAttribute('data-bs-placement', 'top');
-                      if (Array.isArray(game.version)) {
-                          versionBadge.setAttribute('data-bs-title', 'Version info unavailable');
-                      } else if (typeof game.version !== 'undefined') {
-                          versionBadge.setAttribute('data-bs-title', `Version v${game.version}`);
-                      }
-                  }
-                  tagsContainer.appendChild(versionBadge);
+                  if (versionBadge) tagsContainer.appendChild(versionBadge);
+              } else if (typeof game.has_latest_version !== 'undefined' && !isSuppressed) {
+                  const fallbackVersionBadge = document.createElement('span');
+                  fallbackVersionBadge.className = 'badge rounded-pill game-tag version-tag';
+                  fallbackVersionBadge.classList.add(game.has_latest_version ? 'text-bg-success' : 'text-bg-warning');
+                  fallbackVersionBadge.innerHTML = `<i class='bi ${game.has_latest_version ? 'bi-check-circle-fill' : 'bi-arrow-down-circle'}'></i>`;
+                  tagsContainer.appendChild(fallbackVersionBadge);
               }
 
-            if (isAdminUser) {
-                // Override edit pill
+          if (isAdminUser) {
+              // Override edit pill
                 const hasOvr = Overrides?.hasActiveOverride?.(game) === true;
                 const editPill = document.createElement('button');
                 editPill.type = 'button';
@@ -395,6 +449,8 @@
 
             overlayDiv.appendChild(tagsContainer);
             cardDiv.appendChild(overlayDiv);
+
+            bindDetailTrigger(cardDiv, game, { excludeSelector: '.game-info, .game-info *' });
 
             colDiv.appendChild(cardDiv);
             fragment.appendChild(colDiv);
@@ -463,6 +519,8 @@
             iconWrapper.className = 'game-icon-link text-decoration-none';
             iconWrapper.setAttribute('aria-label', iconTitle);
             iconWrapper.appendChild(icon);
+
+            bindDetailTrigger(iconWrapper, game);
 
             fragment.appendChild(iconWrapper);
           });

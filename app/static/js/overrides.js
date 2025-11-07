@@ -11,7 +11,7 @@
 
   const namespace = global.Ownfoil = global.Ownfoil || {};
   const PLACEHOLDER_TEXT = () => window.PLACEHOLDER_TEXT || "Image Unavailable";
-  const DEFAULT_BANNER = () => window.DEFAULT_BANNER || `https://placehold.co/400x225/png?text=${encodeURIComponent(PLACEHOLDER_TEXT())}`;
+  const DEFAULT_BANNER = () => window.DEFAULT_BANNER || `https://placehold.co/1920x1080/png?text=${encodeURIComponent(PLACEHOLDER_TEXT())}`;
   const DEFAULT_ICON   = () => window.DEFAULT_ICON   || `https://placehold.co/400x400/png?text=${encodeURIComponent(PLACEHOLDER_TEXT())}`;
 
   const cacheHelpers = namespace.Cache || null;
@@ -31,7 +31,7 @@
   // key: app_id -> { corrected_title_id, projection }
   const redirectsByAppId = new Map();
 
-  // external environment (supplied by index.html)
+  // external environment (supplied by library view scripts)
   const env = {
     getGames: null,      // () => games array
     applyFilters: null   // () => void
@@ -131,12 +131,12 @@
   
   const pickTidForDisplay = (game, ovr) => {
     const candidates = [
-      ovr?.corrected_title_id,     // explicit override first
-      game?.corrected_title_id,    // server-computed corrected id if present
-      game?.app_id,                // app-specific id (BASE or DLC)
-      game?.dlc_title_id,          // distinct DLC id if existing
-      game?.title_id,              // family/base id (fallback)
-      game?.id                     // last resort
+      ovr?.corrected_title_id,
+      game?.corrected_title_id,
+      game?.app_id,
+      game?.dlc_title_id,
+      game?.title_id,
+      game?.id
     ];
     for (const c of candidates) {
       const t = (c || '').toString().trim();
@@ -144,6 +144,7 @@
     }
     return '';
   };
+
 
   const getRedirectProjectionFor = (game) => {
     if (!game) return null;
@@ -332,6 +333,69 @@
     recomputeAllBaseCompletion(games);
   }
 
+  const overlayProjectionFields = (game, projection) => {
+    if (!game || !projection || typeof projection !== 'object') return game;
+
+    const scalarKeys = [
+      'name',
+      'title_id_name',
+      'description',
+      'intro',
+      'region',
+      'release_date',
+      'bannerUrl',
+      'iconUrl',
+      'publisher',
+      'developer',
+      'language',
+      'numberOfPlayers',
+      'players',
+      'rating',
+      'ratingAge',
+      'ratingSystem',
+      'nsuId',
+      'frontBoxArt',
+    ];
+    const arrayKeys = [
+      'category',
+      'languages',
+      'regions',
+      'ratingContent',
+      'screenshots',
+    ];
+
+    scalarKeys.forEach((key) => {
+      if (!(key in projection)) return;
+      const value = projection[key];
+      if (value === undefined || value === null || value === '') return;
+      if (typeof value === 'string') {
+        const trimmed = value.trim();
+        if (!trimmed) return;
+        game[key] = trimmed;
+        if (key === 'name' && (!projection.title_id_name || typeof projection.title_id_name !== 'string')) {
+          game.title_id_name = trimmed;
+        }
+        if (key === 'title_id_name') {
+          game.title_id_name = trimmed;
+        }
+        return;
+      }
+      game[key] = value;
+    });
+
+    arrayKeys.forEach((key) => {
+      if (!(key in projection)) return;
+      const value = projection[key];
+      if (!Array.isArray(value)) return;
+      const cleaned = value
+        .map((item) => (typeof item === 'string' ? item.trim() : item))
+        .filter((item) => item !== undefined && item !== null && item !== '');
+      game[key] = cleaned.slice();
+    });
+
+    return game;
+  };
+
   // Redirect helpers
   const getRedirectForApp = (appId) => {
     const k = (appId || '').trim();
@@ -352,14 +416,7 @@
     game.recognized_via_correction = true;
 
     // Overlay display metadata (leave identifiers alone)
-    if (typeof proj.name === 'string')        game.name = proj.name;
-    if (typeof proj.description === 'string') game.description = proj.description;
-    if (typeof proj.region === 'string')      game.region = proj.region;
-    if (typeof proj.release_date === 'string') game.release_date = proj.release_date;
-
-    if (proj.bannerUrl) game.bannerUrl = proj.bannerUrl;
-    if (proj.iconUrl)   game.iconUrl   = proj.iconUrl;
-    if (Array.isArray(proj.category))  game.category = proj.category.slice();
+    overlayProjectionFields(game, proj);
 
     return game;
   };
@@ -494,10 +551,15 @@
     const ovrUrl = _trimmedOrNull(ovr?.banner_path) || _trimmedOrNull(ovr?.bannerUrl);
     if (ovrUrl) return addBuster(ovrUrl, getBuster(game.app_id));
 
-    return (
-      _trimmedOrNull(game.banner_path) || _trimmedOrNull(game.bannerUrl) || _trimmedOrNull(game.banner) ||
-      _trimmedOrNull(game.iconUrl) || DEFAULT_BANNER()
-    );
+    const candidates = [
+      _trimmedOrNull(game.banner_path),
+      _trimmedOrNull(game.bannerUrl),
+      _trimmedOrNull(game.banner),
+      _trimmedOrNull(game.iconUrl),
+    ];
+
+    const valid = candidates.find((candidate) => candidate && candidate.toLowerCase().startsWith('http'));
+    return valid || DEFAULT_BANNER();
   }
 
   const iconUrlFor = (game) => {
@@ -505,11 +567,16 @@
     const ovrUrl = _trimmedOrNull(ovr?.icon_path) || _trimmedOrNull(ovr?.iconUrl);
     if (ovrUrl) return addBuster(ovrUrl, getBuster(game.app_id));
 
-    return (
-      _trimmedOrNull(game.iconUrl) || _trimmedOrNull(game.icon) ||
-      _trimmedOrNull(game.banner_path) || _trimmedOrNull(game.bannerUrl) || _trimmedOrNull(game.banner) ||
-      DEFAULT_ICON()
-    );
+    const candidates = [
+      _trimmedOrNull(game.iconUrl),
+      _trimmedOrNull(game.icon),
+      _trimmedOrNull(game.banner_path),
+      _trimmedOrNull(game.bannerUrl),
+      _trimmedOrNull(game.banner),
+    ];
+
+    const valid = candidates.find((candidate) => candidate && candidate.toLowerCase().startsWith('http'));
+    return valid || DEFAULT_ICON();
   }
 
   const getOverrideForGame = (game) => { const k = appKey(game); return k ? overridesByKey.get(k) : null; }
@@ -518,7 +585,7 @@
 
   // ----------------- Cropping helpers -----------------
   const cropBannerFileToDataURL = (file, callback) => {
-    const TARGET_W = 400, TARGET_H = 225;
+    const TARGET_W = 1920, TARGET_H = 1080;
     const img = new Image();
     const url = URL.createObjectURL(file);
 
@@ -602,6 +669,12 @@
     const k = appKey(game);
     const ovr = k ? overridesByKey.get(k) : null;
     const projection = getRedirectProjectionFor(game);
+    const detailModule = namespace.Detail || global.Ownfoil?.Detail || null;
+    const detailWasVisible = !!detailModule?.isVisible?.();
+    const detailAppId = detailModule?.getCurrentAppId?.() || game.app_id || null;
+    if (detailWasVisible && typeof detailModule?.close === 'function') {
+      detailModule.close({ updateHistory: false });
+    }
 
     $('#ovr-id').val(ovr?.id || '');
     $('#ovr-app-id').val(game.app_id || '');
@@ -867,6 +940,15 @@
 
     const modalInstance = overrideModal();
     if (modalInstance) {
+      if (detailWasVisible && detailAppId) {
+        $overrideModalEl.off('hidden.bs.modal.override-detail-restore');
+        $overrideModalEl.on('hidden.bs.modal.override-detail-restore', () => {
+          $overrideModalEl.off('hidden.bs.modal.override-detail-restore');
+          if (typeof detailModule?.open === 'function') {
+            detailModule.open(detailAppId, { historyMode: 'replace' });
+          }
+        });
+      }
       modalInstance.show();
     }
   }
@@ -1360,6 +1442,7 @@
     getRedirectForApp,
     applyRedirectToGame,
     applyRedirectsToGames,
+    applyProjectionToGame: overlayProjectionFields,
 
     getSnapshotForCache() {
       const overridesList = Array.from(overridesByKey.entries()).map(([appId, override]) => ({

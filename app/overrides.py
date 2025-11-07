@@ -490,19 +490,76 @@ def _resolve_target_app(app_id: str) -> Optional[Apps]:
 def _project_titledb_block(corrected_id: str) -> dict:
     """
     Build the projected block for a corrected TitleID using TitleDB.
-    Includes: name, description, region, normalized release_date, bannerUrl, iconUrl, category.
+    Includes the broader metadata surface used by the UI (publisher, languages,
+    ratings, screenshots, etc.) so redirected games can fully inherit the target's
+    details.
     """
     info = titles_lib.get_game_info(corrected_id) or {}
+    if not isinstance(info, dict):
+        return {}
 
-    return {
-        "name":         (info.get("name") or "").strip() or None,
-        "description":  info.get("description"),
-        "region":       info.get("region"),
-        "release_date": info.get("release_date"),
-        "bannerUrl":    info.get("bannerUrl"),
-        "iconUrl":      info.get("iconUrl"),
-        "category":     info.get("category"),
-    }
+    scalar_fields = [
+        "name",
+        "description",
+        "intro",
+        "region",
+        "release_date",
+        "bannerUrl",
+        "iconUrl",
+        "publisher",
+        "developer",
+        "language",
+        "numberOfPlayers",
+        "players",
+        "rating",
+        "ratingAge",
+        "ratingSystem",
+        "nsuId",
+        "frontBoxArt",
+    ]
+    list_fields = [
+        "category",
+        "languages",
+        "regions",
+        "ratingContent",
+        "screenshots",
+    ]
+
+    projection = {}
+
+    for field in scalar_fields:
+        value = info.get(field)
+        if value is None:
+            continue
+        if isinstance(value, (datetime.date, datetime.datetime)):
+            projection[field] = value.isoformat()
+        else:
+            projection[field] = value
+
+    for field in list_fields:
+        raw = info.get(field)
+        if not isinstance(raw, (list, tuple, set)):
+            continue
+        cleaned: list = []
+        for item in raw:
+            if isinstance(item, (str, bytes)):
+                text = str(item).strip()
+                if text:
+                    cleaned.append(text)
+            else:
+                cleaned.append(item)
+        if cleaned:
+            projection[field] = cleaned
+
+    # Ensure key identifiers are present on the projection for downstream cloning.
+    normalized_app = normalize_id(info.get("app_id") or corrected_id, "app")
+    normalized_title = normalize_id(info.get("title_id") or corrected_id, "title")
+    projection["app_id"] = normalized_app or corrected_id
+    projection["title_id"] = normalized_title or corrected_id
+    projection["id"] = projection["title_id"]
+    projection.setdefault("title_id_name", (projection.get("name") or info.get("title_id_name") or "").strip() or None)
+
+    return projection
 
 def _serialize_with_art_urls(ov: AppOverrides) -> dict:
     d = ov.as_dict()

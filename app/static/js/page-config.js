@@ -58,6 +58,12 @@
       assignGlobal('DEFAULT_ICON', defaultIcon);
     }
 
+    const detailBasePath = toStringOrNull(values.detailBasePath);
+    if (detailBasePath) {
+      ConfigNs.detailBasePath = detailBasePath;
+      assignGlobal('DETAIL_BASE_PATH', detailBasePath);
+    }
+
     const adminFlag = coerceBoolean(values.isAdmin);
     if (adminFlag !== null) {
       ConfigNs.isAdmin = adminFlag;
@@ -74,6 +80,7 @@
       placeholderText: ConfigNs.placeholderText,
       defaultBanner: ConfigNs.defaultBanner,
       defaultIcon: ConfigNs.defaultIcon,
+      detailBasePath: ConfigNs.detailBasePath,
       isAdmin: ConfigNs.isAdmin,
       hideGhostCards: ConfigNs.hideGhostCards,
     };
@@ -86,6 +93,7 @@
       placeholderText: dataset.placeholderText ?? fallback.placeholderText,
       defaultBanner: dataset.defaultBanner ?? fallback.defaultBanner,
       defaultIcon: dataset.defaultIcon ?? fallback.defaultIcon,
+      detailBasePath: dataset.detailBasePath ?? fallback.detailBasePath,
       isAdmin: dataset.isAdmin ?? fallback.isAdmin,
       hideGhostCards: dataset.hideGhostCards ?? fallback.hideGhostCards,
     };

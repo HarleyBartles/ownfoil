@@ -57,7 +57,7 @@ def save_art_from_bytes(app_id: str, raw: bytes, kind: str) -> str:
         out_name = f"{app_id}_banner.png"
         upload_dir = current_app.config["BANNERS_UPLOAD_DIR"]
         url_prefix = current_app.config["BANNERS_UPLOAD_URL_PREFIX"].rstrip('/')
-        target_w, target_h = 400, 225
+        target_w, target_h = 1920, 1080
     else:  # icon
         out_name = f"{app_id}_icon.png"
         upload_dir = current_app.config.get("ICONS_UPLOAD_DIR") or current_app.config["BANNERS_UPLOAD_DIR"]

@@ -73,7 +73,10 @@ def _generate_library_metadata_snapshot(*, force_regenerate: bool = False) -> di
     from library import load_or_generate_library_snapshot  # Local import to avoid circular dependency
 
     with titles_lib.titledb_session("generate_library_metadata"):
-        library_snapshot = load_or_generate_library_snapshot(force_regenerate=force_regenerate)
+        # Metadata regeneration only needs the latest library snapshot; forcing a rebuild here
+        # causes an unnecessary second library generation. Let the cache layer trigger library
+        # regeneration separately when required.
+        library_snapshot = load_or_generate_library_snapshot(force_regenerate=False)
         games = library_snapshot.get("library") or []
 
         overrides_by_app = _build_overrides_by_app()

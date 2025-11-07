@@ -1,0 +1,217 @@
+<div
+  class="modal fade"
+  id="gameDetailModal"
+  tabindex="-1"
+  aria-labelledby="gameDetailModalTitle"
+  aria-hidden="true"
+>
+  <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable modal-fullscreen-lg-down game-detail-modal">
+    <div class="modal-content bg-dark text-light border-secondary">
+      <div class="modal-header border-secondary">
+        <div class="w-100 d-flex align-items-center justify-content-between gap-3 flex-wrap">
+          <h1 class="modal-title h4 mb-0" id="gameDetailModalTitle">Game Detail</h1>
+          <button
+            type="button"
+            class="btn-close btn-close-white"
+            data-bs-dismiss="modal"
+            aria-label="Close"
+          ></button>
+        </div>
+      </div>
+      <div class="modal-body">
+        <div id="gameDetailAlert" class="alert alert-danger d-none" role="alert"></div>
+
+        <div
+          id="gameDetailRoot"
+          class="container-fluid px-0"
+          data-app-id="{{ initial_detail_app_id | default('', true) | e }}"
+          data-placeholder-text="{{ placeholder_text | default('Image Unavailable', true) | e }}"
+          data-default-banner="{{ default_banner_url | default('', true) | e }}"
+          data-default-icon="{{ default_icon_url | default('', true) | e }}"
+          data-detail-base-path="{{ detail_base_path | default('/games', true) | e }}"
+          data-library-url="{{ url_for('library') }}"
+          data-is-admin="{{ is_admin | default(false, true) | tojson }}"
+          data-hide-ghost-cards="{{ hide_ghost_cards | default(true, true) | tojson }}"
+          data-match-info-language="{{ match_info_language | default(true) | tojson }}"
+        >
+          <div class="mb-4 mt-1" id="gameHeroSection">
+            <div class="game-hero-media rounded shadow-sm">
+              <div class="game-hero-main">
+                <img
+                  id="gameBanner"
+                  src="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs="
+                  class="game-hero-banner"
+                  alt="Game banner"
+                >
+              </div>
+              <div class="game-hero-sidebar text-white">
+                <div class="game-hero-overlay-content">
+                  <div class="d-flex align-items-start gap-3 mb-3 flex-wrap">
+                    <img
+                      id="gameIcon"
+                      src="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs="
+                      class="rounded"
+                      width="96"
+                      height="96"
+                      alt="Game icon"
+                    >
+                    <div class="flex-grow-1 d-flex flex-column gap-2">
+                      <div class="game-status-indicators d-flex flex-wrap align-items-center gap-2" id="gameStatusPills">
+                        <button
+                          type="button"
+                          class="override-pill btn btn-sm rounded-pill status-pill game-tag d-none"
+                          id="gameDetailOverrideBtn"
+                        >
+                          <i class="bi bi-pencil-square"></i>
+                        </button>
+                      </div>
+                      <div class="text-muted small" id="gameIdentifiers"></div>
+                    </div>
+                  </div>
+
+                  <dl class="row mb-0 small">
+                    <div id="gameMetaRegion" class="meta-row">
+                      <dt class="col-sm-4">Region</dt>
+                      <dd class="col-sm-8" id="gameRegion">—</dd>
+                    </div>
+
+                    <div id="gameMetaRelease" class="meta-row">
+                      <dt class="col-sm-4">Release</dt>
+                      <dd class="col-sm-8" id="gameReleaseDate">—</dd>
+                    </div>
+
+                    <div id="gameMetaPlayers" class="meta-row">
+                      <dt class="col-sm-4">Players</dt>
+                      <dd class="col-sm-8" id="gamePlayers">—</dd>
+                    </div>
+
+                    <div id="gameMetaDeveloper" class="meta-row">
+                      <dt class="col-sm-4">Developer</dt>
+                      <dd class="col-sm-8" id="gameDeveloper">—</dd>
+                    </div>
+
+                    <div id="gameMetaPublisher" class="meta-row">
+                      <dt class="col-sm-4">Publisher</dt>
+                      <dd class="col-sm-8" id="gamePublisher">—</dd>
+                    </div>
+
+                    <div id="gameMetaRating" class="meta-row">
+                      <dt class="col-sm-4">Rating</dt>
+                      <dd class="col-sm-8" id="gameRating">—</dd>
+                    </div>
+
+                    <div id="gameMetaLanguage" class="meta-row">
+                      <dt class="col-sm-4">Language</dt>
+                      <dd class="col-sm-8" id="gameLanguage">—</dd>
+                    </div>
+
+                    <div id="gameMetaLanguages" class="meta-row">
+                      <dt class="col-sm-4">Languages</dt>
+                      <dd class="col-sm-8" id="gameLanguages">—</dd>
+                    </div>
+
+                    <div id="gameMetaSize" class="meta-row">
+                      <dt class="col-sm-4">Size</dt>
+                      <dd class="col-sm-8" id="gameSize">—</dd>
+                    </div>
+                  </dl>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="game-detail-grid">
+            <div class="detail-grid-column detail-grid-main">
+              <div class="card bg-dark border-0 shadow-sm">
+                <div class="card-header border-0">
+                  <h2 class="h5 mb-0">Overview</h2>
+                </div>
+                <div class="card-body">
+                  <p class="mb-3 text-muted" id="gameIntro" hidden></p>
+                  <div class="description-text" id="gameDescription">
+                    <div class="placeholder-glow">
+                      <span class="placeholder col-12 mb-2"></span>
+                      <span class="placeholder col-10 mb-2"></span>
+                      <span class="placeholder col-11"></span>
+                    </div>
+                  </div>
+                </div>
+                <div class="card-footer border-0 pt-0">
+                  <div class="d-flex flex-wrap gap-2" id="gameCategories"></div>
+                </div>
+              </div>
+
+              <div class="card bg-dark border-0 shadow-sm" id="screenshotsCard" hidden>
+                <div class="card-header border-0">
+                  <h2 class="h5 mb-0">Screenshots</h2>
+                </div>
+                <div class="card-body">
+                  <div
+                    id="gameScreenshotCarousel"
+                    class="carousel slide screenshot-carousel"
+                    data-bs-touch="true"
+                  >
+                    <div class="carousel-inner" id="gameScreenshots" aria-live="polite"></div>
+                    <div class="carousel-indicators mb-0 d-none" id="gameScreenshotIndicators"></div>
+                    <button
+                      class="carousel-control-prev"
+                      type="button"
+                      data-bs-target="#gameScreenshotCarousel"
+                      data-bs-slide="prev"
+                      id="gameScreenshotPrevControl"
+                    >
+                      <span class="carousel-control-prev-icon" aria-hidden="true"></span>
+                      <span class="visually-hidden">Previous</span>
+                    </button>
+                    <button
+                      class="carousel-control-next"
+                      type="button"
+                      data-bs-target="#gameScreenshotCarousel"
+                      data-bs-slide="next"
+                      id="gameScreenshotNextControl"
+                    >
+                      <span class="carousel-control-next-icon" aria-hidden="true"></span>
+                      <span class="visually-hidden">Next</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="detail-grid-column detail-grid-sidebar">
+              <div class="card bg-dark border-0 shadow-sm" id="relatedContentCard" hidden>
+                <div class="card-header border-0">
+                  <h2 class="h6 mb-0">Related Content</h2>
+                </div>
+                <div class="card-body pt-3">
+                  <div class="related-content-grid" id="relatedContentList"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <template id="screenshotItemTemplate">
+          <div class="carousel-item">
+            <div class="screenshot-carousel-frame bg-body-secondary rounded overflow-hidden shadow-sm">
+              <img src="" alt="" class="w-100 h-100 object-fit-cover screenshot-image" loading="lazy">
+            </div>
+          </div>
+        </template>
+
+        <template id="relatedItemTemplate">
+          <div class="related-card">
+            <a href="#" class="related-link text-decoration-none">
+              <div class="related-card-icon">
+                <img src="" alt="" loading="lazy" class="related-icon-image">
+              </div>
+              <div class="related-card-body">
+                <div class="related-card-title"></div>
+                <div class="related-card-meta"></div>
+              </div>
+            </a>
+          </div>
+        </template>
+      </div>
+    </div>
+  </div>
+</div>

@@ -3,8 +3,11 @@
      data-placeholder-text="{{ placeholder_text | default('Image Unavailable', true) | e }}"
      data-default-banner="{{ default_banner_url | default('', true) | e }}"
      data-default-icon="{{ default_icon_url | default('', true) | e }}"
+     data-initial-app-id="{{ initial_detail_app_id | default('', true) | e }}"
+     data-detail-base-path="{{ detail_base_path | default('/games', true) | e }}"
      data-is-admin="{{ is_admin | default(false, true) | tojson }}"
-     data-hide-ghost-cards="{{ hide_ghost_cards | default(true, true) | tojson }}">
+     data-hide-ghost-cards="{{ hide_ghost_cards | default(true, true) | tojson }}"
+     data-match-info-language="{{ match_info_language | default(true) | tojson }}">
 
     <div class="row gy-2 gx-3 align-items-center justify-content-md-center">
 
