@@ -101,6 +101,39 @@
                                 </div>
                             </div>
                         </li>
+                        <li>
+                            <hr class="dropdown-divider">
+                        </li>
+                        <li class="genre-filter-item px-0">
+                            <div class="dropdown-item">
+                                <div class="genre-filter-section">
+                                    <button
+                                        type="button"
+                                        class="genre-filter-toggle w-100 text-start"
+                                        id="genreFilterToggle"
+                                        aria-expanded="false"
+                                        aria-controls="genreFilterBody">
+                                        <div class="d-flex align-items-center justify-content-between gap-3">
+                                    <div class="text-uppercase small text-primary fw-semibold" id="genreFilterTitle">Genres (All)</div>
+                                    <span class="genre-filter-toggle-icon" aria-hidden="true">
+                                        <i class="bi bi-chevron-down"></i>
+                                    </span>
+                                </div>
+                            </button>
+                                    <div class="genre-selected-row px-3 py-2 d-none" id="genreSelectedRow">
+                                        <div class="genre-selected-pills d-none flex-grow-1" id="genreSelectedPills"></div>
+                                        <button type="button" class="btn btn-sm btn-outline-secondary" id="clearGenreFilters" disabled>
+                                            Clear
+                                        </button>
+                                    </div>
+                                    <div class="genre-filter-body" id="genreFilterBody" aria-hidden="true">
+                                        <div class="genre-filter-list px-3 pb-3" id="genreFilterList">
+                                            <div class="text-muted small py-2">Loading genres...</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </li>
                     </ul>
                 </div>
             </div>

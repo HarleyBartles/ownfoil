@@ -199,6 +199,7 @@
           syncGamesFromState();
           filteredGames = pruneGhostsInPlace(Array.isArray(games) ? games.slice() : []);
           baseFilteredGames = filteredGames.slice();
+          rebuildGenreFiltersIfNeeded();
       }
 
       function hydrateGamesFromPayload(data) {
@@ -206,6 +207,7 @@
           syncGamesFromState();
           filteredGames = pruneGhostsInPlace(Array.isArray(games) ? games.slice() : []);
           baseFilteredGames = filteredGames.slice();
+          rebuildGenreFiltersIfNeeded();
       }
 
       function normalizePage(value, fallback = 1) {
@@ -655,8 +657,417 @@
       const activeUpdateFilters = new Set();
       const activeCompletionFilters = new Set();
       const activeSpecialFilters = new Set();
+      const activeCategoryFilters = new Set();
+      const pendingCategoryFilters = new Set();
+      let allCategoryOptions = [];
+      let categoryLabelMap = new Map();
+      let categoryOptionsSignature = '';
 
       const getCheckedId = (groupName) => $(`input[name="${groupName}"]:checked`).attr('id') || null;
+
+      const GENRE_LIST_SELECTOR = '#genreFilterList';
+      const GENRE_TITLE_SELECTOR = '#genreFilterTitle';
+      const GENRE_BODY_SELECTOR = '#genreFilterBody';
+      const GENRE_TOGGLE_SELECTOR = '#genreFilterToggle';
+      const GENRE_PILLS_SELECTOR = '#genreSelectedPills';
+      const GENRE_SELECTED_ROW_SELECTOR = '#genreSelectedRow';
+      const CLEAR_GENRE_BUTTON_SELECTOR = '#clearGenreFilters';
+
+      const CATEGORY_CANONICALS = {
+          action: { label: 'Action', aliases: ['アクション', '액션', '動作', '动作', 'action game'] },
+          arcade: { label: 'Arcade', aliases: ['アーケード', '街機', 'arcade', 'arcade game', 'arcades'] },
+          adventure: { label: 'Adventure', aliases: ['アドベンチャー', '冒険', '冒险', '모험', 'adventure game'] },
+          'role-playing': { label: 'Role-Playing', aliases: ['ロールプレイング', 'role playing', 'role playing game', 'RPG', 'ＲＰＧ', '角色扮演', '角色扮演游戏', '롤플레잉'] },
+          simulation: { label: 'Simulation', aliases: ['シミュレーション', '模拟', '模擬', '시뮬레이션', 'simulation game'] },
+          strategy: { label: 'Strategy', aliases: ['ストラテジー', '策略', '戰略', '戦略', '전략', 'strategy game'] },
+          sports: { label: 'Sports', aliases: ['スポーツ', '体育', '體育', '스포츠', 'sports game'] },
+          puzzle: { label: 'Puzzle', aliases: ['パズル', '益智', 'パズルゲーム', '퍼즐', 'puzzle game'] },
+          racing: { label: 'Racing', aliases: ['レース', '赛车', '賽車', '레이싱', 'racing game'] },
+          shooter: { label: 'Shooter', aliases: ['シューティング', '射击', '射擊', '슈팅', 'shooting'] },
+          fighting: { label: 'Fighting', aliases: ['格闘', '格鬥', '格斗', '대전 격투', '대전', 'fighting game'] },
+          platformer: { label: 'Platformer', aliases: ['平台跳跃', '平台跳躍', 'プラットフォーム', 'ジャンプ', '플랫포머', 'platform'] },
+          rhythm: { label: 'Rhythm', aliases: ['リズム', '音乐', '音樂', '리듬', 'rhythm game'] },
+          horror: { label: 'Horror', aliases: ['ホラー', '恐怖', '호러', 'horror game'] },
+          party: { label: 'Party', aliases: ['パーティー', '派对', '파티', 'party game'] },
+          board: { label: 'Board/Card', aliases: ['ボードゲーム', 'カード', '卡牌', '桌游', '보드', 'テーブル', 'board game', 'card game', 'table'] },
+          education: { label: 'Education', aliases: ['教育', '학습', '学習', '学習ゲーム', 'learning', 'education', 'educational'] },
+          music: { label: 'Music', aliases: ['音楽', '音乐游戏', '音樂遊戲', '뮤직', 'music game'] },
+          other: { label: 'Other', aliases: ['その他', 'other', 'others']},
+          training: {label: 'Training', aliases: ['トレーニング', 'training']}
+      };
+
+
+      function normalizeCategoryValue(raw) {
+          if (typeof raw !== 'string') raw = (raw ?? '').toString();
+          if (!raw) return '';
+          let normalized = raw;
+          if (normalized.normalize) normalized = normalized.normalize('NFKD');
+          normalized = normalized.replace(/[\u0300-\u036f]/g, '');
+          normalized = normalized.trim().toLowerCase();
+          normalized = normalized.replace(/\s+/g, ' ');
+          return normalized;
+      }
+
+      const CATEGORY_ALIAS_LOOKUP = (() => {
+          const map = new Map();
+          Object.entries(CATEGORY_CANONICALS).forEach(([key, info]) => {
+              const aliasSet = new Set([key, info.label, ...(info.aliases || [])]);
+              aliasSet.forEach((alias) => {
+                  const normalized = normalizeCategoryValue(alias);
+                  if (normalized && !map.has(normalized)) {
+                      map.set(normalized, key);
+                  }
+              });
+          });
+          return map;
+      })();
+
+      const GENRE_ICON_MAP = {
+          action: 'fa-solid fa-bolt',
+          adventure: 'fa-solid fa-map-location-dot',
+          arcade: 'fa-solid fa-gamepad',
+          'board/card': 'fa-solid fa-chess-board',
+          board: 'fa-solid fa-chess-board',
+          communication: 'fa-solid fa-comments',
+          education: 'fa-solid fa-graduation-cap',
+          educational: 'fa-solid fa-graduation-cap',
+          study: 'fa-solid fa-book-open-reader',
+          training: 'fa-solid fa-chalkboard-user',
+          fighting: 'fa-solid fa-hand-fist',
+          'first-person shooter': 'fa-solid fa-crosshairs',
+          shooter: 'fa-solid fa-crosshairs',
+          lifestyle: 'fa-solid fa-heart-pulse',
+          music: 'fa-solid fa-music',
+          party: 'fa-solid fa-people-group',
+          platformer: 'fa-solid fa-layer-group',
+          practical: 'fa-solid fa-screwdriver-wrench',
+          utility: 'fa-solid fa-screwdriver-wrench',
+          puzzle: 'fa-solid fa-puzzle-piece',
+          racing: 'fa-solid fa-flag-checkered',
+          'role-playing': 'fa-solid fa-hat-wizard',
+          simulation: 'fa-solid fa-vr-cardboard',
+          strategy: 'fa-solid fa-chess-knight',
+          video: 'fa-solid fa-film',
+          other: 'fa-solid fa-question',
+      };
+
+      const DEFAULT_GENRE_ICON = 'fa-solid fa-gamepad';
+
+      function canonicalizeCategoryValue(raw) {
+          const normalized = normalizeCategoryValue(raw);
+          if (!normalized) return '';
+          return CATEGORY_ALIAS_LOOKUP.get(normalized) || normalized;
+      }
+
+      function getGenreIconClass(value) {
+          const canonical = canonicalizeCategoryValue(value);
+          if (!canonical) return DEFAULT_GENRE_ICON;
+          if (GENRE_ICON_MAP[canonical]) return GENRE_ICON_MAP[canonical];
+          return DEFAULT_GENRE_ICON;
+      }
+
+      function asCategoryArray(source) {
+          if (!source) return [];
+          if (Array.isArray(source)) return source;
+          if (typeof source === 'string' || typeof source === 'number') return [source];
+          return [];
+      }
+
+      function collectRawCategoriesFromGame(game) {
+          if (!game || typeof game !== 'object') return [];
+          const values = [];
+          const pushValues = (source) => {
+              asCategoryArray(source).forEach((value) => {
+                  const str = (value ?? '').toString().trim();
+                  if (str) values.push(str);
+              });
+          };
+          pushValues(game.category);
+          pushValues(game.categories);
+          pushValues(game.category_tags);
+          pushValues(game.metadata?.category);
+          pushValues(game._metadataEntry?.category);
+          pushValues(game._orig?.category);
+          return values;
+      }
+
+      function getGameCategoryValues(game) {
+          const normalized = new Set();
+          collectRawCategoriesFromGame(game).forEach((value) => {
+              const norm = canonicalizeCategoryValue(value);
+              if (norm) normalized.add(norm);
+          });
+          return Array.from(normalized);
+      }
+
+      function collectCategoryOptionsFromGames(list) {
+          const labelMap = new Map();
+          (Array.isArray(list) ? list : []).forEach((game) => {
+              collectRawCategoriesFromGame(game).forEach((raw) => {
+                  const norm = canonicalizeCategoryValue(raw);
+                  if (!norm || labelMap.has(norm)) return;
+                  const canonical = CATEGORY_CANONICALS[norm];
+                  const displayLabel = canonical?.label || (typeof raw === 'string' ? raw.trim() : norm);
+                  labelMap.set(norm, displayLabel);
+              });
+          });
+          return Array.from(labelMap.entries())
+              .map(([value, label]) => ({
+                  value,
+                  label: label || value,
+              }))
+              .sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }));
+      }
+
+      function getCategoryLabel(value) {
+          if (!value) return '';
+          const canonicalKey = canonicalizeCategoryValue(value);
+          if (canonicalKey && CATEGORY_CANONICALS[canonicalKey]?.label) {
+              return CATEGORY_CANONICALS[canonicalKey].label;
+          }
+          if (canonicalKey && categoryLabelMap.get(canonicalKey)) {
+              return categoryLabelMap.get(canonicalKey);
+          }
+          if (categoryLabelMap.get(value)) return categoryLabelMap.get(value);
+          if (canonicalKey && canonicalKey !== value) {
+              return canonicalKey.split(/[\s_-]+/).map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(' ');
+          }
+          return value;
+      }
+
+      function updateGenreSummaryUi() {
+          const $title = $(GENRE_TITLE_SELECTOR);
+          if (!$title.length) return;
+          if (!allCategoryOptions.length) {
+              $title.text('Genres (Loading)');
+              return;
+          }
+          if (!activeCategoryFilters.size) {
+              $title.text('Genres (All)');
+          } else {
+              $title.text('Genres');
+          }
+      }
+
+      function updateGenreClearButtonState() {
+          const $btn = $(CLEAR_GENRE_BUTTON_SELECTOR);
+          if (!$btn.length) return;
+          $btn.prop('disabled', activeCategoryFilters.size === 0);
+      }
+
+      function renderGenreSelectedPills() {
+          const $container = $(GENRE_PILLS_SELECTOR);
+          const $row = $(GENRE_SELECTED_ROW_SELECTOR);
+          if (!$container.length) return;
+          const selectedValues = Array.from(activeCategoryFilters);
+          if (!selectedValues.length) {
+              $container.empty().addClass('d-none');
+              if ($row.length) $row.addClass('d-none');
+              return;
+          }
+          $container.removeClass('d-none');
+          if ($row.length) $row.removeClass('d-none');
+          const fragment = document.createDocumentFragment();
+          selectedValues
+              .map((value) => ({
+                  value,
+                  label: getCategoryLabel(value),
+              }))
+              .sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }))
+              .forEach((item) => {
+                  const pill = document.createElement('span');
+                  pill.className = 'genre-pill';
+                  pill.dataset.genreValue = item.value;
+
+                  const textSpan = document.createElement('span');
+                  textSpan.textContent = item.label || item.value;
+
+                  const removeBtn = document.createElement('button');
+                  removeBtn.type = 'button';
+                  removeBtn.className = 'genre-pill-remove';
+                  removeBtn.dataset.genreValue = item.value;
+                  removeBtn.setAttribute('aria-label', `Remove ${item.label || item.value}`);
+                  removeBtn.innerHTML = '&times;';
+
+                  pill.appendChild(textSpan);
+                  pill.appendChild(removeBtn);
+                  fragment.appendChild(pill);
+              });
+
+          $container.empty().append(fragment).removeClass('d-none');
+      }
+
+      function refreshGenreSelectionUi() {
+          updateGenreSummaryUi();
+          updateGenreClearButtonState();
+          renderGenreSelectedPills();
+      }
+
+      function setGenreSectionExpanded(expanded) {
+          const $body = $(GENRE_BODY_SELECTOR);
+          const $toggle = $(GENRE_TOGGLE_SELECTOR);
+          const $row = $(GENRE_SELECTED_ROW_SELECTOR);
+          if ($body.length) {
+              $body.toggleClass('open', expanded);
+              $body.attr('aria-hidden', expanded ? 'false' : 'true');
+          }
+          if ($toggle.length) {
+              $toggle.attr('aria-expanded', expanded ? 'true' : 'false');
+          }
+          if ($row.length) {
+              $row.toggleClass('expanded', expanded);
+          }
+      }
+
+      function computeVisibleCategoryOptions() {
+          if (!Array.isArray(games) || !games.length || !allCategoryOptions.length) {
+              return [];
+          }
+          if (!activeCategoryFilters.size) {
+              return allCategoryOptions.slice();
+          }
+
+          const selection = Array.from(activeCategoryFilters);
+          const matchingGames = games.filter((game) => {
+              const categories = getGameCategoryValues(game);
+              if (!categories.length) return false;
+              const categorySet = new Set(categories);
+              for (let i = 0; i < selection.length; i += 1) {
+                  if (!categorySet.has(selection[i])) return false;
+              }
+              return true;
+          });
+
+          const derivedOptions = collectCategoryOptionsFromGames(matchingGames);
+          const combinedMap = new Map();
+          selection.forEach((value) => {
+              const label = getCategoryLabel(value);
+              combinedMap.set(value, { value, label });
+          });
+          derivedOptions.forEach((option) => {
+              if (!combinedMap.has(option.value)) combinedMap.set(option.value, option);
+          });
+
+          return Array.from(combinedMap.values())
+              .sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }));
+      }
+
+      function renderGenreFilterOptions() {
+          const $list = $(GENRE_LIST_SELECTOR);
+          if (!$list.length) return;
+
+          if (!allCategoryOptions.length) {
+              $list.html('<div class="text-muted small py-2">No genres detected.</div>');
+              refreshGenreSelectionUi();
+              return;
+          }
+
+          const options = computeVisibleCategoryOptions();
+
+          if (!options.length) {
+              $list.html('<div class="text-muted small py-2">No matching genres.</div>');
+          } else {
+              const fragment = document.createDocumentFragment();
+              options.forEach((option) => {
+                  const row = document.createElement('div');
+                  row.className = 'genre-toggle-row';
+                  row.dataset.categoryValue = option.value;
+                  row.setAttribute('tabindex', '0');
+                  row.setAttribute('role', 'button');
+
+                  const info = document.createElement('div');
+                  info.className = 'genre-toggle-info';
+
+                  const icon = document.createElement('i');
+                  icon.className = `genre-icon ${getGenreIconClass(option.value)}`;
+                  info.appendChild(icon);
+
+                  const textSpan = document.createElement('span');
+                  textSpan.textContent = option.label;
+                  info.appendChild(textSpan);
+
+                  const toggle = document.createElement('div');
+                  toggle.className = 'genre-toggle-button';
+
+                  row.appendChild(info);
+                  row.appendChild(toggle);
+                  fragment.appendChild(row);
+              });
+
+              $list.empty().append(fragment);
+          }
+
+          applyCategoryFiltersToDom();
+          pendingCategoryFilters.clear();
+      }
+
+      function rebuildGenreFiltersIfNeeded() {
+          if (!Array.isArray(games) || !games.length) {
+              allCategoryOptions = [];
+              categoryLabelMap = new Map();
+              categoryOptionsSignature = '';
+              const $list = $(GENRE_LIST_SELECTOR);
+              if ($list.length) {
+                  $list.html('<div class="text-muted small py-2">No genres detected.</div>');
+              }
+              refreshGenreSelectionUi();
+              return;
+          }
+          const options = collectCategoryOptionsFromGames(games);
+          const signature = options.map((option) => option.value).join('|');
+          const changed = signature !== categoryOptionsSignature;
+          if (changed || !allCategoryOptions.length) {
+              categoryOptionsSignature = signature;
+              allCategoryOptions = options;
+              categoryLabelMap = new Map(options.map((option) => [option.value, option.label]));
+          }
+          renderGenreFilterOptions();
+          refreshGenreSelectionUi();
+      }
+
+      function clearGenreFilters() {
+          activeCategoryFilters.clear();
+          pendingCategoryFilters.clear();
+          applyCategoryFiltersToDom();
+      }
+
+      function applyCategoryFiltersToDom() {
+          const $list = $(GENRE_LIST_SELECTOR);
+          if (!$list.length) {
+              refreshGenreSelectionUi();
+              return;
+          }
+          const rows = $list.find('.genre-toggle-row');
+          if (!rows.length) {
+              refreshGenreSelectionUi();
+              return;
+          }
+          rows.each((_, row) => {
+              const rawValue = row.dataset.categoryValue;
+              const value = canonicalizeCategoryValue(rawValue);
+              const isActive = activeCategoryFilters.has(value);
+              row.classList.toggle('active', isActive);
+              row.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+              const toggle = row.querySelector('.genre-toggle-button');
+              if (toggle) {
+                  toggle.classList.toggle('active', isActive);
+              }
+          });
+          refreshGenreSelectionUi();
+      }
+
+      function handleGenreToggle(value) {
+          const normalized = canonicalizeCategoryValue(value);
+          if (!normalized) return;
+          if (activeCategoryFilters.has(normalized)) {
+              activeCategoryFilters.delete(normalized);
+          } else {
+              activeCategoryFilters.add(normalized);
+          }
+          renderGenreFilterOptions();
+          applyFilters();
+          saveFiltersToStorage();
+      }
 
       function updateFilter() {
           // clear all
@@ -704,6 +1115,7 @@
               update:      normalizeId(getCheckedId('updateFilter')),
               completion:  normalizeId(getCheckedId('completionFilter')),
               override:    normalizeId(getCheckedId('specialFilter')),
+              genres:      Array.from(activeCategoryFilters),
           };
           CacheModule?.writeLocalJson?.('activeFilters', filters);
       }
@@ -729,12 +1141,25 @@
               if (f.update)     checkIfExistsAndSet(f.update);
               if (f.completion) checkIfExistsAndSet(f.completion);
               if (f.override)   checkIfExistsAndSet(f.override);
+              if (Array.isArray(f.genres)) {
+                  activeCategoryFilters.clear();
+                  pendingCategoryFilters.clear();
+                  f.genres.forEach((value) => {
+                      const norm = canonicalizeCategoryValue(value);
+                      if (!norm) return;
+                      activeCategoryFilters.add(norm);
+                      pendingCategoryFilters.add(norm);
+                  });
+                  refreshGenreSelectionUi();
+              }
           }
 
           updateFilter();
 
           const savedSearch = CacheModule?.readLocalString?.('searchTerm', null);
           if (typeof savedSearch === 'string') $('#textFilter').val(savedSearch);
+
+          applyCategoryFiltersToDom();
 
           applyFilters({ preservePage: true });
       }
@@ -842,6 +1267,7 @@
           const requireUpdate = activeUpdateFilters.size > 0;
           const requireCompletion = activeCompletionFilters.size > 0;
           const requireSpecial = activeSpecialFilters.size > 0;
+          const requireCategories = activeCategoryFilters.size > 0;
 
           const wantsOwned = activeOwnershipFilters.has("Owned");
           const wantsMissing = activeOwnershipFilters.has("Missing");
@@ -851,6 +1277,7 @@
           const wantsMissingDlc = activeCompletionFilters.has("Missing DLC");
           const wantsUnrecognized = activeSpecialFilters.has("Unrecognized");
           const wantsOverridden = activeSpecialFilters.has("Overridden");
+          const categoryFiltersSet = requireCategories ? new Set(activeCategoryFilters) : null;
 
           const gamesUpperType = requireType ? new Set(Array.from(activeTypeFilters).map(t => (t || '').toUpperCase())) : null;
           const canCheckUnrecognized = typeof Overrides?.isUnrecognizedGame === 'function';
@@ -904,6 +1331,16 @@
                       }
                   }
                   if (!matchesSpecial) return false;
+              }
+
+              if (requireCategories) {
+                  if (!categoryFiltersSet || !categoryFiltersSet.size) return false;
+                  const gameCategories = getGameCategoryValues(game);
+                  if (!gameCategories.length) return false;
+                  const gameCategorySet = new Set(gameCategories);
+                  for (const needed of categoryFiltersSet) {
+                      if (!gameCategorySet.has(needed)) return false;
+                  }
               }
 
               return true;
@@ -989,6 +1426,7 @@
                       syncGamesFromState();
                       filteredGames = pruneGhostsInPlace(Array.isArray(games) ? games.slice() : []);
                       baseFilteredGames = filteredGames.slice();
+                      rebuildGenreFiltersIfNeeded();
                       updatePaginationSummary(filteredGames.length);
                       loadFiltersFromStorage();
                       renderGames();
@@ -1008,6 +1446,7 @@
                       syncGamesFromState();
                       filteredGames = pruneGhostsInPlace(Array.isArray(games) ? games.slice() : []);
                       baseFilteredGames = filteredGames.slice();
+                      rebuildGenreFiltersIfNeeded();
                       applyFilters({ preservePage: true });
                   } catch (err) {
                       console.warn('Ownfoil overrides refresh failed', err);
@@ -1022,6 +1461,7 @@
                   syncGamesFromState();
                   filteredGames = pruneGhostsInPlace(Array.isArray(games) ? games.slice() : []);
                   baseFilteredGames = filteredGames.slice();
+                  rebuildGenreFiltersIfNeeded();
                   if (result?.etags) updateKnownEtags(result.etags);
                   loadFiltersFromStorage();
                   applyFilters({ preservePage: restoredFromSnapshot });
@@ -1030,6 +1470,7 @@
                   syncGamesFromState();
                   filteredGames = pruneGhostsInPlace(Array.isArray(games) ? games.slice() : []);
                   baseFilteredGames = filteredGames.slice();
+                  rebuildGenreFiltersIfNeeded();
                   loadFiltersFromStorage();
                   applyFilters({ preservePage: true });
               } finally {
@@ -1104,6 +1545,51 @@
           // Filters
           $('.type-toggle, .ownership-toggle, .update-toggle, .completion-toggle, .override-toggle').on('change', function() {
               updateFilter();
+              applyFilters();
+              saveFiltersToStorage();
+          });
+
+      $(document).on('click', '#genreFilterList .genre-toggle-row', (event) => {
+          event.preventDefault();
+          const row = event.currentTarget;
+          handleGenreToggle(row.dataset.categoryValue);
+      });
+
+          $(document).on('keydown', '#genreFilterList .genre-toggle-row', (event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault();
+                  handleGenreToggle(event.currentTarget.dataset.categoryValue);
+              }
+          });
+
+          $(document).on('click', '#clearGenreFilters', (event) => {
+              event.preventDefault();
+              if (!activeCategoryFilters.size) return;
+              clearGenreFilters();
+              renderGenreFilterOptions();
+              applyFilters();
+              saveFiltersToStorage();
+          });
+
+          $(document).on('click', '#genreFilterToggle', (event) => {
+              event.preventDefault();
+              const $body = $(GENRE_BODY_SELECTOR);
+              const isOpen = $body.hasClass('open');
+              setGenreSectionExpanded(!isOpen);
+          });
+
+          $(document).on('click', '.genre-pill-remove', (event) => {
+              event.preventDefault();
+              const button = event.currentTarget;
+              const value = button?.dataset?.genreValue;
+              if (!value) return;
+              if (activeCategoryFilters.has(value)) activeCategoryFilters.delete(value);
+              if (pendingCategoryFilters.has(value)) pendingCategoryFilters.delete(value);
+              const $checkbox = $(`${GENRE_LIST_SELECTOR} .genre-filter-checkbox`).filter((_, el) => {
+                  return (el.dataset.categoryValue || '').toLowerCase() === value;
+              });
+              $checkbox.prop('checked', false);
+              renderGenreFilterOptions();
               applyFilters();
               saveFiltersToStorage();
           });
