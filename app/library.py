@@ -8,7 +8,12 @@ from typing import Dict, Optional, Sequence, Union
 
 from sqlalchemy import or_
 
-from cache import build_snapshot_etag, compute_library_apps_hash, snapshot_has_required_shape
+from cache import (
+    build_snapshot_etag,
+    compute_library_apps_hash,
+    snapshot_has_required_shape,
+    is_library_snapshot_current,
+)
 from constants import *
 from db import *
 from settings import load_settings
@@ -1053,7 +1058,8 @@ def load_or_generate_library_snapshot(force_regenerate: bool = False):
         payload_key="library",
         payload_type=list,
     ):
-        return saved
+        if is_library_snapshot_current(saved):
+            return saved
 
     # Cache missing or unusable → regenerate
     return _generate_library_snapshot()
